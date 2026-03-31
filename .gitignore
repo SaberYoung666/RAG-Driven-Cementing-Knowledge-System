@@ -1,0 +1,52 @@
+# Nested repository metadata
+/backend/.git/
+/frontend/.git/
+/rag-service/.git/
+
+# Environment files
+/.env
+/.env.*
+!/.env.example
+/frontend/.env
+/frontend/.env.*
+!/frontend/.env.example
+
+# OS / editor artifacts
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Backend build output and runtime data
+/backend/target/
+/backend/data/uploads/
+
+# Frontend dependencies and build output
+/frontend/node_modules/
+/frontend/dist/
+/frontend/dist-ssr/
+/frontend/*.tsbuildinfo
+
+# Python caches, venvs, and generated data
+/rag-service/__pycache__/
+/rag-service/.venv/
+/rag-service/venv/
+/rag-service/env/
+/rag-service/.pytest_cache/
+/rag-service/.mypy_cache/
+/rag-service/.ruff_cache/
+/rag-service/build/
+/rag-service/dist/
+/rag-service/*.egg-info/
+/rag-service/data/
+/rag-service/evaluation/*.csv
+/rag-service/evaluation/*.json
+
+# Local Docker/runtime helpers
+docker-compose.override.yml
