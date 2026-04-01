@@ -19,6 +19,7 @@ import org.swpu.backend.modules.chat.service.CitationDisplayService;
 import org.swpu.backend.modules.chat.service.ChatLogService;
 import org.swpu.backend.modules.chat.service.RagClient;
 import org.swpu.backend.modules.logging.service.SystemLogService;
+import org.swpu.backend.modules.rag.service.RagAvailabilityService;
 import reactor.core.publisher.Mono;
 
 class ChatControllerTest {
@@ -30,7 +31,8 @@ class ChatControllerTest {
 		ChatLogService chatLogService = Mockito.mock(ChatLogService.class);
 		SystemLogService systemLogService = Mockito.mock(SystemLogService.class);
 		AuthContextService authContextService = Mockito.mock(AuthContextService.class);
-		ChatController controller = new ChatController(ragClient, citationDisplayService, chatLogService, systemLogService, authContextService);
+		RagAvailabilityService ragAvailabilityService = Mockito.mock(RagAvailabilityService.class);
+		ChatController controller = new ChatController(ragClient, citationDisplayService, chatLogService, systemLogService, authContextService, ragAvailabilityService);
 		ChatDto.ChatReq req = new ChatDto.ChatReq(
 				"固井顶替效率受哪些因素影响？",
 				null,
@@ -44,6 +46,7 @@ class ChatControllerTest {
 				null,
 				null
 		);
+		Mockito.doNothing().when(ragAvailabilityService).requireChatReady();
 		when(citationDisplayService.normalizeRagResp(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
 		ApiResponse<ChatDto.RagResp> response = controller.chat(null, req).block();
@@ -66,7 +69,8 @@ class ChatControllerTest {
 		ChatLogService chatLogService = Mockito.mock(ChatLogService.class);
 		SystemLogService systemLogService = Mockito.mock(SystemLogService.class);
 		AuthContextService authContextService = Mockito.mock(AuthContextService.class);
-		ChatController controller = new ChatController(ragClient, citationDisplayService, chatLogService, systemLogService, authContextService);
+		RagAvailabilityService ragAvailabilityService = Mockito.mock(RagAvailabilityService.class);
+		ChatController controller = new ChatController(ragClient, citationDisplayService, chatLogService, systemLogService, authContextService, ragAvailabilityService);
 		ChatDto.ChatReq req = new ChatDto.ChatReq(
 				"query",
 				"1",
@@ -80,6 +84,7 @@ class ChatControllerTest {
 				null,
 				null
 		);
+		Mockito.doNothing().when(ragAvailabilityService).requireChatReady();
 		ChatDto.Citation rawCitation = new ChatDto.Citation(
 				"abc::p1::c1",
 				0.95,
