@@ -69,6 +69,9 @@ import type { TablePaginationConfig } from "ant-design-vue";
 import { ingestFile, listDocs, deleteDoc, processDoc, getDocProcessInfo } from "@/api/docs";
 import type { DocItem, DocProcessInfo } from "@/types";
 
+const MAX_UPLOAD_SIZE_MB = 500;
+const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
+
 const loading = ref(false);
 const items = ref<DocItem[]>([]);
 const total = ref(0);
@@ -218,6 +221,10 @@ async function remove(docId: string) {
 }
 
 async function beforeUpload(file: File) {
+  if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+    message.error(`上传文件不能超过 ${MAX_UPLOAD_SIZE_MB}MB`);
+    return false;
+  }
   const res = await ingestFile(file, overwrite.value);
   if (res.code !== 0) return message.error(res.message || "上传失败");
   message.success(res.data.message || "已提交入库任务");

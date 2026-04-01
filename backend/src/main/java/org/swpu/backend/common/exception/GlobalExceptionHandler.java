@@ -11,6 +11,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.swpu.backend.common.api.ApiResponse;
 import org.swpu.backend.common.api.CommonErrorCode;
 import org.swpu.backend.common.logging.TraceContext;
@@ -48,6 +49,15 @@ public class GlobalExceptionHandler {
         markRequest(request, CommonErrorCode.BAD_REQUEST.getCode(), false, CommonErrorCode.BAD_REQUEST.getMessage());
         recordException("WARN", ex, request, CommonErrorCode.BAD_REQUEST.getCode(), CommonErrorCode.BAD_REQUEST.getMessage());
         return ApiResponse.error(CommonErrorCode.BAD_REQUEST, CommonErrorCode.BAD_REQUEST.getMessage());
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ApiResponse<Void> handleMaxUploadSizeExceededException(MaxUploadSizeExceededException ex, HttpServletRequest request) {
+        String message = "uploaded file exceeds the 500MB limit";
+        log.warn("Upload exceeds max size: {}", ex.getMessage());
+        markRequest(request, CommonErrorCode.PAYLOAD_TOO_LARGE.getCode(), false, message);
+        recordException("WARN", ex, request, CommonErrorCode.PAYLOAD_TOO_LARGE.getCode(), message);
+        return ApiResponse.error(CommonErrorCode.PAYLOAD_TOO_LARGE, message);
     }
 
     // 处理未捕获异常：返回系统内部错误

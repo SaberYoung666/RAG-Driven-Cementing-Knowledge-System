@@ -7,6 +7,7 @@ public enum CommonErrorCode implements ErrorCode {
     UNAUTHORIZED(401, "unauthorized"),
     FORBIDDEN(403, "forbidden"),
     NOT_FOUND(404, "not found"),
+    PAYLOAD_TOO_LARGE(413, "payload too large"),
     INTERNAL_ERROR(500, "internal error");
 
     private final int code;
