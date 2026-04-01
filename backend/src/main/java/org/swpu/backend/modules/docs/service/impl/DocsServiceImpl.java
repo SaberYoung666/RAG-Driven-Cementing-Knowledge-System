@@ -98,6 +98,7 @@ public class DocsServiceImpl implements DocsService {
 		wrapper.orderByDesc("upload_time");
 
 		Page<DocEntity> pageResult = docMapper.selectPage(new Page<>(page, size), wrapper);
+		refreshProcessingStatuses(pageResult.getRecords());
 		List<DocItem> items = DocConverter.toItems(pageResult.getRecords());
 		return PageResult.of(items, pageResult.getTotal(), page, size);
 	}
@@ -229,24 +230,21 @@ public class DocsServiceImpl implements DocsService {
 			throw new BusinessException(CommonErrorCode.NOT_FOUND, "未找到文档");
 		}
 
-		syncStatusFromRag(entity);
+		DocsRagClient.RagIngestStatus ragStatus = syncStatusFromRag(entity);
 
-		String status = Objects.toString(entity.getStatus(), STATUS_UNPROCESSED);
-		int progress = toProgress(status);
-		String stage = switch (status.toLowerCase(Locale.ROOT)) {
-			case "queued" -> "排队中";
-			case "processing", "indexing", "处理中" -> "索引处理中";
-			case "done", "已处理" -> "处理完成";
-			case "failed", "处理失败" -> "处理失败";
-			default -> "待处理";
-		};
-		String message = switch (status.toLowerCase(Locale.ROOT)) {
-			case "queued" -> "任务已入队，等待执行";
-			case "processing", "indexing", "处理中" -> "已提交 RAG 微服务处理";
-			case "done", "已处理" -> "文档已完成切分与索引";
-			case "failed", "处理失败" -> "处理失败，请重试";
-			default -> "未开始处理";
-		};
+		String rawStatus = ragStatus != null && StringUtils.hasText(ragStatus.status())
+				? ragStatus.status()
+				: Objects.toString(entity.getStatus(), STATUS_UNPROCESSED);
+		String status = normalizeDocStatus(rawStatus);
+		int progress = toProgress(rawStatus);
+		String stage = resolveStage(rawStatus);
+		String message = resolveProcessMessage(rawStatus, ragStatus);
+		String updatedAt = firstNonBlank(
+				ragStatus == null ? null : ragStatus.updatedAt(),
+				ragStatus == null ? null : ragStatus.finishedAt(),
+				entity.getUploadTime()
+		);
+		String detail = buildProcessDetail(ragStatus, message);
 		return new DocProcessInfo(
 				entity.getDocId(),
 				status,
@@ -254,8 +252,8 @@ public class DocsServiceImpl implements DocsService {
 				stage,
 				message,
 				entity.getChunkCount(),
-				entity.getUploadTime(),
-				message
+				updatedAt,
+				detail
 		);
 	}
 
@@ -297,7 +295,12 @@ public class DocsServiceImpl implements DocsService {
 		if ("queued".equalsIgnoreCase(status) || "PENDING".equalsIgnoreCase(status)) {
 			return 10;
 		}
-		if (STATUS_PROCESSING.equals(status) || "PROCESSING".equalsIgnoreCase(status) || "RUNNING".equalsIgnoreCase(status)) {
+		if (STATUS_PROCESSING.equals(status)
+				|| "PROCESSING".equalsIgnoreCase(status)
+				|| "RUNNING".equalsIgnoreCase(status)
+				|| "ocr_processing".equalsIgnoreCase(status)
+				|| "cleaning".equalsIgnoreCase(status)
+				|| "splitting".equalsIgnoreCase(status)) {
 			return 50;
 		}
 		if ("indexing".equalsIgnoreCase(status)) {
@@ -332,37 +335,142 @@ public class DocsServiceImpl implements DocsService {
 		return path.toString();
 	}
 
-	// 异步从RAG获取文档处理进度
-	private void syncStatusFromRag(DocEntity entity) {
-		if (entity == null || !StringUtils.hasText(entity.getDocId())) {
+	private void refreshProcessingStatuses(List<DocEntity> docs) {
+		if (docs == null || docs.isEmpty()) {
 			return;
+		}
+		for (DocEntity doc : docs) {
+			if (doc == null || !isProcessingStatus(doc.getStatus())) {
+				continue;
+			}
+			syncStatusFromRag(doc);
+		}
+	}
+
+	// 异步从RAG获取文档处理进度
+	private DocsRagClient.RagIngestStatus syncStatusFromRag(DocEntity entity) {
+		if (entity == null || !StringUtils.hasText(entity.getDocId())) {
+			return null;
 		}
 		try {
 			DocsRagClient.RagIngestStatus rag = docsRagClient.getIngestStatus(entity.getDocId()).block(Duration.ofSeconds(5));
 			if (rag == null || !StringUtils.hasText(rag.status())) {
-				return;
+				return rag;
 			}
-			String mapped = mapRagStatus(rag.status());
+			String mapped = normalizeDocStatus(rag.status());
 			entity.setStatus(mapped);
 			if (rag.chunkCount() != null && rag.chunkCount() >= 0) {
 				entity.setChunkCount(rag.chunkCount());
 			}
 			docMapper.updateById(entity);
 			recordDocLog(entity.getUserId(), "SYNC_DOC_STATUS", "Synchronized document status from RAG", entity.getDocId(), mapOf("docId", entity.getDocId(), "docName", entity.getTitle(), "status", mapped, "chunkCount", entity.getChunkCount()));
+			return rag;
 		} catch (Exception ex) {
 			log.debug("获取RAG文档处理进度失败: docId={}", entity.getDocId(), ex);
 			recordAsyncDocLog(entity.getUserId(), entity.getDocId(), "SYNC_DOC_STATUS_FAILED", "Failed to sync document status", ex, null);
+			return null;
 		}
 	}
 
-	private String mapRagStatus(String raw) {
+	private String normalizeDocStatus(String raw) {
 		String s = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
 		return switch (s) {
 			case "done", "success", "ready" -> STATUS_PROCESSED;
 			case "failed", "error" -> STATUS_PROCESS_FAILED;
-			case "queued", "processing", "indexing" -> s;
+			case "queued", "processing", "indexing", "ocr_processing", "cleaning", "splitting", "running", "pending" -> STATUS_PROCESSING;
 			default -> raw;
 		};
+	}
+
+	private boolean isProcessingStatus(String status) {
+		String normalized = status == null ? "" : status.trim().toLowerCase(Locale.ROOT);
+		return List.of(
+				STATUS_PROCESSING.toLowerCase(Locale.ROOT),
+				"queued",
+				"processing",
+				"running",
+				"pending",
+				"ocr_processing",
+				"cleaning",
+				"splitting",
+				"indexing"
+		).contains(normalized);
+	}
+
+	private String resolveStage(String rawStatus) {
+		String normalized = rawStatus == null ? "" : rawStatus.trim().toLowerCase(Locale.ROOT);
+		return switch (normalized) {
+			case "queued" -> "排队中";
+			case "processing", "running", "pending", "处理中" -> "处理中";
+			case "ocr_processing" -> "OCR处理中";
+			case "cleaning" -> "文本清洗中";
+			case "splitting" -> "切分中";
+			case "indexing" -> "索引处理中";
+			case "done", "success", "ready", "已处理" -> "处理完成";
+			case "failed", "error", "处理失败" -> "处理失败";
+			default -> "待处理";
+		};
+	}
+
+	private String resolveProcessMessage(String rawStatus, DocsRagClient.RagIngestStatus ragStatus) {
+		if (ragStatus != null) {
+			if (StringUtils.hasText(ragStatus.error())) {
+				return ragStatus.error().trim();
+			}
+			if (StringUtils.hasText(ragStatus.message())) {
+				return ragStatus.message().trim();
+			}
+		}
+		String normalized = rawStatus == null ? "" : rawStatus.trim().toLowerCase(Locale.ROOT);
+		return switch (normalized) {
+			case "queued" -> "任务已入队，等待执行";
+			case "processing", "running", "pending", "处理中" -> "已提交 RAG 微服务处理";
+			case "ocr_processing" -> "正在执行 OCR";
+			case "cleaning" -> "正在清洗文本";
+			case "splitting" -> "正在切分文档";
+			case "indexing" -> "正在构建索引";
+			case "done", "success", "ready", "已处理" -> "文档已完成切分与索引";
+			case "failed", "error", "处理失败" -> "处理失败，请重试";
+			default -> "未开始处理";
+		};
+	}
+
+	private String buildProcessDetail(DocsRagClient.RagIngestStatus ragStatus, String fallbackMessage) {
+		if (ragStatus == null) {
+			return fallbackMessage;
+		}
+		List<String> parts = new ArrayList<>();
+		if (StringUtils.hasText(ragStatus.message())) {
+			parts.add(ragStatus.message().trim());
+		}
+		if (StringUtils.hasText(ragStatus.error())) {
+			parts.add("错误: " + ragStatus.error().trim());
+		}
+		if (ragStatus.pagesProcessed() != null) {
+			parts.add("已处理页数: " + ragStatus.pagesProcessed());
+		}
+		if (ragStatus.ocrPages() != null) {
+			parts.add("OCR页数: " + ragStatus.ocrPages());
+		}
+		if (ragStatus.elapsedMs() != null) {
+			parts.add("耗时: " + ragStatus.elapsedMs() + "ms");
+		}
+		if (ragStatus.failedPages() != null && !ragStatus.failedPages().isEmpty()) {
+			parts.add("失败页: " + ragStatus.failedPages());
+		}
+		return parts.isEmpty() ? fallbackMessage : String.join(" | ", parts);
+	}
+
+	private String firstNonBlank(String... values) {
+		if (values == null) {
+			return null;
+		}
+		for (String value : values) {
+			if (StringUtils.hasText(value)) {
+				return value.trim();
+			}
+		}
+		return null;
 	}
 
 	private Long resolveCurrentUserId(String bearerToken) {

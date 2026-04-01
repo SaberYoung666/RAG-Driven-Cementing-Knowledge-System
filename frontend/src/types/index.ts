@@ -67,9 +67,10 @@ export interface DocItem {
     title: string;
     source?: string;
     uploadTime?: string;
+    category?: string;
     version?: string;
     hash?: string;
-    status?: "READY" | "PROCESSING" | "FAILED";
+    status?: "READY" | "PROCESSING" | "FAILED" | "queued" | "processing" | "ocr_processing" | "cleaning" | "splitting" | "indexing" | "done" | "success" | "ready" | string;
     chunkCount?: number;
 }
 
@@ -82,6 +83,12 @@ export interface DocProcessInfo {
     chunkCount?: number;
     updatedAt?: string;
     detail?: string;
+}
+
+export interface ProcessStartResult {
+    requestId: string;
+    acceptedDocIds: string[];
+    acceptedCount: number;
 }
 
 export interface PageResult<T> {

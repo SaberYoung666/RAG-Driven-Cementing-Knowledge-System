@@ -31,6 +31,9 @@
         @change="onTableChange"
       >
         <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'status'">
+            {{ processStatusText(record.status) }}
+          </template>
           <template v-if="column.key === 'actions'">
             <a-space size="small">
               <a-button size="small" :disabled="isProcessActionDisabled(record)" @click="onProcessAction(record)">{{ processActionLabel(record) }}</a-button>
@@ -54,7 +57,7 @@
         <a-descriptions-item label="文档编号">{{ processDocId || "-" }}</a-descriptions-item>
         <a-descriptions-item label="处理状态">{{ processStatusText(processInfo?.status) }}</a-descriptions-item>
         <a-descriptions-item label="进度">
-          <template v-if="processInfo?.status === 'PROCESSING' || processInfo?.status === '处理中'">
+          <template v-if="normalizeStatus(processInfo?.status) === 'PROCESSING'">
             <a-progress :percent="processPercent" :status="progressStatus" />
           </template>
           <template v-else>{{ processPercent }}%</template>
@@ -134,7 +137,7 @@ function normalizeStatus(status?: string) {
   const s = (status || "").toUpperCase();
   if (!s) return "UNPROCESSED";
   if (s === "READY" || s === "SUCCESS" || s === "DONE") return "READY";
-  if (s === "PROCESSING" || s === "RUNNING" || s === "PENDING") return "PROCESSING";
+  if (s === "PROCESSING" || s === "RUNNING" || s === "PENDING" || s === "QUEUED" || s === "INDEXING" || s === "OCR_PROCESSING" || s === "CLEANING" || s === "SPLITTING") return "PROCESSING";
   if (s === "FAILED" || s === "ERROR") return "FAILED";
   if (s === "未处理") return "UNPROCESSED";
   if (s === "处理中") return "PROCESSING";
@@ -216,7 +219,11 @@ async function openProcessModal(docId: string) {
 async function triggerProcess(docId: string) {
   const res = await processDoc(docId);
   if (res.code !== 0) return message.error(res.message || "处理触发失败");
-  message.success(res.message || "已提交处理任务");
+  if (!res.data || res.data.acceptedCount <= 0) {
+    message.warning("当前文档未被受理，可能已在处理中或状态不支持");
+    return;
+  }
+  message.success(`已提交 ${res.data.acceptedCount} 个处理任务`);
   await load();
 }
 

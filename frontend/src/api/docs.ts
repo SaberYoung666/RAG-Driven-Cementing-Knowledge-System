@@ -1,5 +1,5 @@
 import { http } from "./http";
-import type { ApiResponse, DocItem, DocProcessInfo, PageResult } from "@/types";
+import type { ApiResponse, DocItem, DocProcessInfo, PageResult, ProcessStartResult } from "@/types";
 
 export async function listDocs(params: { page?: number; pageSize?: number; keyword?: string; status?: string }) {
     const { data } = await http.get<ApiResponse<PageResult<DocItem>>>("/api/v1/docs", { params });
@@ -24,7 +24,7 @@ export async function ingestFile(file: File, overwrite = false) {
 }
 
 export async function processDoc(docId: string) {
-    const { data } = await http.post<ApiResponse<{ accepted: boolean; jobId?: string; message?: string }>>(
+    const { data } = await http.post<ApiResponse<ProcessStartResult>>(
         `/api/v1/docs/${encodeURIComponent(docId)}/process`
     );
     return data;

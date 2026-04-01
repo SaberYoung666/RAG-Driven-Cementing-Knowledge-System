@@ -81,7 +81,17 @@ public class DocsRagClient {
 			String message,
 			@JsonAlias({"chunk_count"})
 			Integer chunkCount,
-			String error
+			String error,
+			@JsonAlias({"failed_pages"})
+			List<Integer> failedPages,
+			@JsonAlias({"started_at"})
+			String startedAt,
+			@JsonAlias({"finished_at"})
+			String finishedAt,
+			@JsonAlias({"updated_at"})
+			String updatedAt,
+			@JsonAlias({"elapsed_ms"})
+			Integer elapsedMs
 	) {
 	}
 }
