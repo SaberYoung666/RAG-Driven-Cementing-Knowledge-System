@@ -17,7 +17,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
-RUN pip install --upgrade pip && pip install -r requirements.txt
+ENV PIP_DEFAULT_TIMEOUT=600
+ENV PIP_TIMEOUT=600
+
+RUN python -m pip install --upgrade pip && \
+    pip install --no-cache-dir --timeout 600 --retries 20 \
+    --index-url https://download.pytorch.org/whl/cpu torch && \
+    pip install --no-cache-dir --timeout 600 --retries 20 -r requirements.txt
 
 COPY . .
 
