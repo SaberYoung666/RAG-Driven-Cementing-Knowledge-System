@@ -22,6 +22,14 @@ function serializeValue(value: unknown, seen = new WeakSet<object>()): string {
   if (value == null) return String(value);
   if (typeof value === "object") {
     try {
+      const raw = String(value);
+      if (raw !== "[object Object]" && raw !== "[object Array]") {
+        return raw;
+      }
+    } catch {
+      // fall through to JSON serialization
+    }
+    try {
       return JSON.stringify(
         value,
         (_key, currentValue) => {
@@ -30,8 +38,7 @@ function serializeValue(value: unknown, seen = new WeakSet<object>()): string {
             seen.add(currentValue);
           }
           return currentValue;
-        },
-        2
+        }
       );
     } catch {
       return Object.prototype.toString.call(value);

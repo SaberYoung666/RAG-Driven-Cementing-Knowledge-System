@@ -5,29 +5,19 @@
         <div class="console-toolbar">
           <a-space wrap>
             <a-select v-model:value="sourceFilter" style="width: 150px" :options="sourceOptions" />
-            <a-select v-model:value="levelFilter" style="width: 150px" :options="levelOptions" />
             <a-switch v-model:checked="autoScroll" checked-children="自动滚动" un-checked-children="手动浏览" />
             <a-button @click="clearLogs">清空显示</a-button>
           </a-space>
           <div class="status-group">
             <a-tag :color="backendConnected ? 'success' : 'error'">后端 {{ backendConnected ? "已连接" : "断开" }}</a-tag>
             <a-tag :color="ragConnected ? 'success' : 'error'">RAG {{ ragConnected ? "已连接" : "断开" }}</a-tag>
-            <span class="status-meta">共 {{ filteredLogs.length }} 条</span>
+            <span class="status-meta">共 {{ filteredLogs.length }} 段</span>
           </div>
         </div>
 
         <div ref="logViewport" class="console-viewport mono">
           <div v-if="filteredLogs.length === 0" class="console-empty">暂无日志输出</div>
-          <div v-for="item in filteredLogs" :key="item.id" class="log-row" :class="`level-${normalizeLevel(item.level)}`">
-            <div class="log-meta">
-              <span class="log-time">{{ formatTime(item.timestamp) }}</span>
-              <a-tag class="log-tag" :color="getSourceColor(item.source)">{{ item.source }}</a-tag>
-              <a-tag class="log-tag" :color="getLevelColor(item.level)">{{ normalizeLevel(item.level) }}</a-tag>
-              <span class="log-logger">{{ item.logger || "-" }}</span>
-            </div>
-            <div class="log-message">{{ item.message }}</div>
-            <pre v-if="item.details" class="log-details">{{ item.details }}</pre>
-          </div>
+          <pre v-else class="console-output">{{ filteredOutput }}</pre>
         </div>
       </div>
     </a-card>
@@ -36,16 +26,27 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
-import dayjs from "dayjs";
-import { connectRealtimeLogStream, type RealtimeLogEntry } from "@/api/realtimeLogs";
+import type { RealtimeLogEntry } from "@/api/realtimeLogs";
+import type { RealtimeConsoleEntry } from "@/api/realtimeConsole";
 import { getConsoleLogs, subscribeConsoleLogs } from "@/logging/consoleCapture";
+import {
+  ensureRealtimeConsoleStreamsStarted,
+  getRealtimeConsoleStreamLogs,
+  getRealtimeConsoleStreamStatus,
+  subscribeRealtimeConsoleStreamLogs,
+  subscribeRealtimeConsoleStreamStatus,
+} from "@/logging/realtimeConsoleStreams";
 
-type DisplayLogEntry = RealtimeLogEntry & { id: string };
+type DisplayLogEntry = {
+  id: string;
+  source: "frontend" | "backend" | "rag";
+  raw: string;
+  timestamp: string;
+};
 
 const LOG_LIMIT = 1000;
 const logs = ref<DisplayLogEntry[]>([]);
 const sourceFilter = ref<"all" | "frontend" | "backend" | "rag">("all");
-const levelFilter = ref<"all" | "DEBUG" | "INFO" | "WARN" | "ERROR">("all");
 const autoScroll = ref(true);
 const backendConnected = ref(false);
 const ragConnected = ref(false);
@@ -58,31 +59,22 @@ const sourceOptions = [
   { value: "rag", label: "RAG" },
 ];
 
-const levelOptions = [
-  { value: "all", label: "全部级别" },
-  { value: "DEBUG", label: "DEBUG" },
-  { value: "INFO", label: "INFO" },
-  { value: "WARN", label: "WARN" },
-  { value: "ERROR", label: "ERROR" },
-];
-
 const filteredLogs = computed(() =>
-  logs.value.filter((item) => {
-    const sourceMatched = sourceFilter.value === "all" || item.source === sourceFilter.value;
-    const levelMatched = levelFilter.value === "all" || normalizeLevel(item.level) === levelFilter.value;
-    return sourceMatched && levelMatched;
-  })
+  logs.value.filter((item) => sourceFilter.value === "all" || item.source === sourceFilter.value)
 );
+const filteredOutput = computed(() => filteredLogs.value.map((item) => item.raw).join(""));
 
 let logSequence = 0;
 let stopConsoleSubscribe: (() => void) | null = null;
-let stopBackendStream: (() => void) | null = null;
-let stopRagStream: (() => void) | null = null;
+let stopRealtimeConsoleSubscribe: (() => void) | null = null;
+let stopRealtimeStatusSubscribe: (() => void) | null = null;
 
-function appendLog(entry: RealtimeLogEntry) {
+function appendDisplayEntry(source: DisplayLogEntry["source"], timestamp: string, raw: string) {
   logs.value.push({
-    ...entry,
-    id: `${entry.source}-${entry.timestamp}-${logSequence++}`,
+    id: `${source}-${timestamp}-${logSequence++}`,
+    source,
+    timestamp,
+    raw,
   });
   if (logs.value.length > LOG_LIMIT) {
     logs.value.splice(0, logs.value.length - LOG_LIMIT);
@@ -96,68 +88,46 @@ function appendLog(entry: RealtimeLogEntry) {
   }
 }
 
+function ensureTrailingNewline(value: string) {
+  return value.endsWith("\n") ? value : `${value}\n`;
+}
+
+function appendFrontendLog(entry: RealtimeLogEntry) {
+  const raw = entry.details ? `${entry.message}\n${entry.details}` : entry.message;
+  appendDisplayEntry("frontend", entry.timestamp, ensureTrailingNewline(raw));
+}
+
+function appendRealtimeChunk(entry: RealtimeConsoleEntry) {
+  if (!entry.raw) return;
+  appendDisplayEntry(entry.source, entry.timestamp, entry.raw);
+}
+
 function clearLogs() {
   logs.value = [];
 }
 
-function normalizeLevel(level?: string | null) {
-  const normalized = (level || "INFO").toUpperCase();
-  if (["DEBUG", "INFO", "WARN", "ERROR"].includes(normalized)) {
-    return normalized;
-  }
-  return "INFO";
-}
-
-function formatTime(value: string) {
-  return dayjs(value).isValid() ? dayjs(value).format("HH:mm:ss.SSS") : value;
-}
-
-function getLevelColor(level?: string | null) {
-  switch (normalizeLevel(level)) {
-    case "DEBUG":
-      return "default";
-    case "WARN":
-      return "warning";
-    case "ERROR":
-      return "error";
-    default:
-      return "processing";
-  }
-}
-
-function getSourceColor(source: string) {
-  if (source === "frontend") return "geekblue";
-  if (source === "backend") return "green";
-  return "volcano";
-}
-
 onMounted(() => {
-  getConsoleLogs().forEach(appendLog);
-  stopConsoleSubscribe = subscribeConsoleLogs(appendLog);
+  ensureRealtimeConsoleStreamsStarted();
 
-  const backendConnection = connectRealtimeLogStream(
-    "/api/v1/realtime-logs/backend",
-    appendLog,
-    (connected) => {
-      backendConnected.value = connected;
-    }
-  );
-  stopBackendStream = backendConnection.stop;
+  getConsoleLogs().forEach((entry) => appendFrontendLog(entry));
+  stopConsoleSubscribe = subscribeConsoleLogs(appendFrontendLog);
 
-  const ragConnection = connectRealtimeLogStream(
-    "/api/v1/realtime-logs/rag",
-    appendLog,
-    (connected) => {
-      ragConnected.value = connected;
-    }
-  );
-  stopRagStream = ragConnection.stop;
+  getRealtimeConsoleStreamLogs().forEach((entry) => appendRealtimeChunk(entry));
+  stopRealtimeConsoleSubscribe = subscribeRealtimeConsoleStreamLogs(appendRealtimeChunk);
+
+  const currentStatus = getRealtimeConsoleStreamStatus();
+  backendConnected.value = currentStatus.backendConnected;
+  ragConnected.value = currentStatus.ragConnected;
+  stopRealtimeStatusSubscribe = subscribeRealtimeConsoleStreamStatus((status) => {
+    backendConnected.value = status.backendConnected;
+    ragConnected.value = status.ragConnected;
+  });
 });
 
 onBeforeUnmount(() => {
   stopConsoleSubscribe?.();
-  stopBackendStream?.();
-  stopRagStream?.();
+  stopRealtimeConsoleSubscribe?.();
+  stopRealtimeStatusSubscribe?.();
 });
 </script>
 
@@ -205,7 +175,6 @@ onBeforeUnmount(() => {
     linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 95%, transparent), var(--bg-soft));
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 
 .console-empty {
@@ -215,59 +184,16 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 
-.log-row {
-  padding: 12px 14px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
-}
-
-.log-row.level-ERROR {
-  border-color: rgba(239, 68, 68, 0.4);
-}
-
-.log-row.level-WARN {
-  border-color: rgba(245, 158, 11, 0.4);
-}
-
-.log-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.log-time,
-.log-logger {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.log-tag {
-  margin-inline-end: 0;
-}
-
-.log-message {
-  margin-top: 10px;
+.console-output {
+  margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.6;
   color: var(--text);
 }
 
-.log-details {
-  margin: 10px 0 0;
-  padding: 10px;
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.06);
-  color: var(--text);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 @media (max-width: 768px) {
-  .console-toolbar,
-  .log-meta {
+  .console-toolbar {
     align-items: flex-start;
     flex-direction: column;
   }

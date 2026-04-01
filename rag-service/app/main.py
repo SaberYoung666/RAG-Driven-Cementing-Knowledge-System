@@ -4,10 +4,12 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from app.core.config import settings
+from app.core.live_console import install_console_capture
 from app.core.errors import install_exception_handlers
 from app.core.lifecycle import close_state, init_state
 from app.core.logging import configure_logging
 from app.routers.chat import router as chat_router
+from app.routers.console import router as console_router
 from app.routers.doc import router as doc_router
 from app.routers.eval import router as eval_router
 from app.routers.health import router as health_router
@@ -17,6 +19,7 @@ from app.routers.logs import router as logs_router
 
 
 def create_app() -> FastAPI:
+    install_console_capture()
     configure_logging()
     app = FastAPI(title=settings.app_name, version=settings.app_version)
     install_exception_handlers(app)
@@ -31,6 +34,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(logs_router)
+    app.include_router(console_router)
     app.include_router(chat_router)
     app.include_router(ingest_router)
     app.include_router(index_router)

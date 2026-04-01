@@ -1,20 +1,13 @@
-import type { AuthUser } from "@/types";
+export type RealtimeConsoleSource = "backend" | "rag";
 
-export type RealtimeLogSource = "frontend" | "backend" | "rag";
-export type RealtimeLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
-
-export interface RealtimeLogEntry {
-  type?: "log" | "heartbeat";
-  source: RealtimeLogSource;
-  level: RealtimeLogLevel | string;
-  logger?: string | null;
-  thread?: string | null;
-  message: string;
+export interface RealtimeConsoleEntry {
+  type?: "chunk" | "heartbeat";
+  source: RealtimeConsoleSource;
+  raw: string | null;
   timestamp: string;
-  details?: string | null;
 }
 
-export interface RealtimeLogConnection {
+export interface RealtimeConsoleConnection {
   stop: () => void;
 }
 
@@ -24,11 +17,11 @@ function getAuthorizationHeader() {
   return token ? `${tokenType} ${token}` : "";
 }
 
-export function connectRealtimeLogStream(
+export function connectRealtimeConsoleStream(
   url: string,
-  onMessage: (entry: RealtimeLogEntry, raw: string) => void,
+  onMessage: (entry: RealtimeConsoleEntry) => void,
   onStatus?: (connected: boolean, reason?: string) => void
-): RealtimeLogConnection {
+): RealtimeConsoleConnection {
   const controller = new AbortController();
   let stopped = false;
 
@@ -62,21 +55,20 @@ export function connectRealtimeLogStream(
           buffer = lines.pop() || "";
 
           for (const line of lines) {
-            const raw = line;
-            const trimmed = raw.trim();
+            const trimmed = line.trim();
             if (!trimmed) continue;
-            const payload = JSON.parse(trimmed) as RealtimeLogEntry;
+            const payload = JSON.parse(trimmed) as RealtimeConsoleEntry;
             if (payload.type === "heartbeat") continue;
-            onMessage(payload, raw);
+            onMessage(payload);
           }
         }
+
         onStatus?.(false, "stream closed");
       } catch (error) {
         if (stopped || controller.signal.aborted) break;
         const reason = error instanceof Error ? error.message : "stream connection failed";
         onStatus?.(false, reason);
         await new Promise((resolve) => window.setTimeout(resolve, 2000));
-        continue;
       }
     }
   };
@@ -90,8 +82,4 @@ export function connectRealtimeLogStream(
       onStatus?.(false, "stopped");
     },
   };
-}
-
-export function isAdmin(user?: AuthUser | null) {
-  return user?.role === "ADMIN";
 }
