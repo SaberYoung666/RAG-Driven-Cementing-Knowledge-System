@@ -28,6 +28,7 @@
         :pagination="pagination"
         rowKey="docId"
         :loading="loading"
+        :customRow="bindRowEvents"
         @change="onTableChange"
       >
         <template #bodyCell="{ column, record }">
@@ -36,10 +37,12 @@
           </template>
           <template v-if="column.key === 'actions'">
             <a-space size="small">
-              <a-button size="small" :disabled="isProcessActionDisabled(record)" @click="onProcessAction(record)">{{ processActionLabel(record) }}</a-button>
-              <a-popconfirm title="确认删除？" @confirm="remove(record.docId)">
-                <a-button danger size="small">删除</a-button>
-              </a-popconfirm>
+              <a-button size="small" :disabled="isProcessActionDisabled(record)" @click.stop="onProcessAction(record)">{{ processActionLabel(record) }}</a-button>
+              <span @click.stop>
+                <a-popconfirm title="确认删除？" @confirm="remove(record.docId)">
+                  <a-button danger size="small" @click.stop>删除</a-button>
+                </a-popconfirm>
+              </span>
             </a-space>
           </template>
         </template>
@@ -201,18 +204,24 @@ async function openProcessModal(docId: string) {
   processDocId.value = docId;
   processModalOpen.value = true;
   processModalLoading.value = true;
+  await refreshProcessInfo();
+}
+
+async function refreshProcessInfo(silent = false) {
+  if (!processDocId.value) return;
+  if (!silent) processModalLoading.value = true;
   try {
-    const res = await getDocProcessInfo(docId);
+    const res = await getDocProcessInfo(processDocId.value);
     if (res.code !== 0) {
-      message.error(res.message || "加载处理信息失败");
-      processInfo.value = { docId, message: "暂无处理详情" };
+      if (!silent) message.error(res.message || "加载处理信息失败");
+      processInfo.value = { docId: processDocId.value, message: "暂无处理详情" };
       return;
     }
     processInfo.value = res.data;
   } catch {
-    processInfo.value = { docId, message: "暂无处理详情" };
+    processInfo.value = { docId: processDocId.value, message: "暂无处理详情" };
   } finally {
-    processModalLoading.value = false;
+    if (!silent) processModalLoading.value = false;
   }
 }
 
@@ -240,6 +249,15 @@ async function onProcessAction(record: DocItem) {
   await triggerProcess(record.docId);
 }
 
+function bindRowEvents(record: DocItem) {
+  return {
+    style: { cursor: "pointer" },
+    onClick: () => {
+      void openProcessModal(record.docId);
+    }
+  };
+}
+
 async function remove(docId: string) {
   const res = await deleteDoc(docId);
   if (res.code !== 0) return message.error(res.message || "删除失败");
@@ -263,7 +281,10 @@ onMounted(() => {
   void load();
   autoRefreshTimer = window.setInterval(() => {
     void load({ silent: true });
-  }, 10000);
+    if (processModalOpen.value && processDocId.value) {
+      void refreshProcessInfo(true);
+    }
+  }, 2000);
 });
 
 onBeforeUnmount(() => {

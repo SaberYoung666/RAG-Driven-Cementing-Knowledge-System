@@ -47,7 +47,11 @@ class IngestJobManager:
             row = {
                 "doc_id": doc_id,
                 "status": "queued",
+                "progress": 0,
+                "stage_progress": 0,
                 "pages_processed": 0,
+                "total_pages": None,
+                "current_page": None,
                 "ocr_pages": 0,
                 "chunk_count": 0,
                 "enable_ocr": enable_ocr,
@@ -91,18 +95,25 @@ class IngestJobManager:
         message: str = "done",
         failed_pages: list[int] | None = None,
         elapsed_ms: int | None = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
+        payload = dict(kwargs or {})
+        payload.update(
+            {
+                "status": "done",
+                "pages_processed": pages_processed,
+                "ocr_pages": ocr_pages,
+                "chunk_count": chunk_count,
+                "message": message,
+                "failed_pages": failed_pages or [],
+                "error": None,
+                "finished_at": _utc_now(),
+                "elapsed_ms": elapsed_ms,
+            }
+        )
         return self.update(
             doc_id,
-            status="done",
-            pages_processed=pages_processed,
-            ocr_pages=ocr_pages,
-            chunk_count=chunk_count,
-            message=message,
-            failed_pages=failed_pages or [],
-            error=None,
-            finished_at=_utc_now(),
-            elapsed_ms=elapsed_ms,
+            **payload,
         )
 
     def fail(
@@ -115,6 +126,7 @@ class IngestJobManager:
         failed_pages: list[int] | None = None,
         elapsed_ms: int | None = None,
     ) -> Dict[str, Any]:
+        existing = self.get(doc_id) or {}
         payload: Dict[str, Any] = {
             "status": "failed",
             "message": message,
@@ -122,6 +134,10 @@ class IngestJobManager:
             "finished_at": _utc_now(),
             "elapsed_ms": elapsed_ms,
             "failed_pages": failed_pages or [],
+            "progress": int(existing.get("progress") or 0),
+            "stage_progress": int(existing.get("stage_progress") or 0),
+            "total_pages": existing.get("total_pages"),
+            "current_page": existing.get("current_page"),
         }
         if pages_processed is not None:
             payload["pages_processed"] = pages_processed

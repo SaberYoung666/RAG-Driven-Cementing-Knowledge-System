@@ -156,6 +156,7 @@ class IngestService:
             file_path,
             enable_ocr,
         )
+        total_pages = self._estimate_total_pages(file_path)
 
         # 先对文档进行基本清洗
         pages, failed_pages = self._extract_pages(
@@ -182,16 +183,32 @@ class IngestService:
                 "cleaning",
                 {
                     "pages_processed": len(pages),
+                    "total_pages": total_pages,
+                    "current_page": 0 if pages else None,
+                    "stage_progress": 0,
                     "ocr_pages": ocr_pages,
                     "failed_pages": failed_pages,
                 },
             )
 
         # 去除空行
-        for row in pages:
+        total_clean_pages = len(pages)
+        for idx, row in enumerate(pages, 1):
             row.text = self._basic_clean(
                 row.text, remove_empty_lines=remove_empty_lines
             )
+            if status_callback is not None and total_clean_pages > 0:
+                status_callback(
+                    "cleaning",
+                    {
+                        "pages_processed": len(pages),
+                        "total_pages": total_pages,
+                        "current_page": idx,
+                        "stage_progress": round(idx * 100 / total_clean_pages),
+                        "ocr_pages": ocr_pages,
+                        "failed_pages": failed_pages,
+                    },
+                )
         # 去除页眉页脚等重复内容
         if remove_repeated_margins and len(pages) > 1:
             pages = self._remove_repeated_margin_lines(pages)
@@ -201,14 +218,18 @@ class IngestService:
             status_callback(
                 "splitting",
                 {
-                    "pages_processed": len(pages),
+                    "pages_processed": 0,
+                    "total_pages": total_pages,
+                    "current_page": 0 if pages else None,
+                    "stage_progress": 0,
                     "ocr_pages": ocr_pages,
                     "failed_pages": failed_pages,
                 },
             )
 
         records: List[Dict[str, Any]] = []
-        for page_row in pages:
+        total_split_pages = len(pages)
+        for idx, page_row in enumerate(pages, 1):
             chunks = self._chunk_page(
                 text=page_row.text,
                 strategy=use_strategy,
@@ -234,6 +255,19 @@ class IngestService:
                             "ocr_confidence_avg": page_row.ocr_confidence_avg,
                         },
                     }
+                )
+            if status_callback is not None and total_split_pages > 0:
+                status_callback(
+                    "splitting",
+                    {
+                        "pages_processed": idx,
+                        "total_pages": total_pages,
+                        "current_page": idx,
+                        "stage_progress": round(idx * 100 / total_split_pages),
+                        "ocr_pages": ocr_pages,
+                        "chunk_count": len(records),
+                        "failed_pages": failed_pages,
+                    },
                 )
 
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
@@ -396,6 +430,8 @@ class IngestService:
         )
 
         with fitz.open(str(file_path)) as pdf:
+            total_pages = pdf.page_count
+            ocr_count = 0
             for idx in range(pdf.page_count):
                 page_no = idx + 1
                 page = pdf.load_page(idx)
@@ -413,8 +449,18 @@ class IngestService:
                         render_t0 = time.perf_counter()
                         image = self._render_pdf_page(page, scale=scale)
                         render_ms = (time.perf_counter() - render_t0) * 1000
-                        if status_callback is not None and not ocr_logged:
-                            status_callback("ocr_processing", None)
+                        if status_callback is not None:
+                            status_callback(
+                                "ocr_processing",
+                                {
+                                    "pages_processed": page_no - 1,
+                                    "total_pages": total_pages,
+                                    "current_page": page_no,
+                                    "stage_progress": round((page_no - 1) * 100 / total_pages),
+                                    "ocr_pages": ocr_count,
+                                    "failed_pages": failed_pages,
+                                },
+                            )
                         if not ocr_logged:
                             logger.info(
                                 "文档触发OCR file=%s mode=%s",
@@ -433,6 +479,19 @@ class IngestService:
                                 ocr_confidence_avg=ocr_res.confidence_avg,
                             )
                         )
+                        ocr_count += 1
+                        if status_callback is not None:
+                            status_callback(
+                                "ocr_processing",
+                                {
+                                    "pages_processed": page_no,
+                                    "total_pages": total_pages,
+                                    "current_page": page_no,
+                                    "stage_progress": round(page_no * 100 / total_pages),
+                                    "ocr_pages": ocr_count,
+                                    "failed_pages": failed_pages,
+                                },
+                            )
                         # TODO：当前调试时，会打印整个页面的内容，之后可以改为只打印OCR提取的文本长度和置信度等信息
                         logger.info(
                             "页面OCR成功 file=%s page=%s render_ms=%.2f ocr_confidence_avg=%.2f extracted_chars=%s ocr_chars=%s",
@@ -471,6 +530,18 @@ class IngestService:
                                 ocr_confidence_avg=None,
                             )
                         )
+                        if status_callback is not None:
+                            status_callback(
+                                "ocr_processing",
+                                {
+                                    "pages_processed": page_no,
+                                    "total_pages": total_pages,
+                                    "current_page": page_no,
+                                    "stage_progress": round(page_no * 100 / total_pages),
+                                    "ocr_pages": ocr_count,
+                                    "failed_pages": failed_pages,
+                                },
+                            )
                 else:
                     rows.append(
                         PageText(
@@ -480,6 +551,18 @@ class IngestService:
                             ocr_confidence_avg=None,
                         )
                     )
+                    if status_callback is not None:
+                        status_callback(
+                            "processing",
+                            {
+                                "pages_processed": page_no,
+                                "total_pages": total_pages,
+                                "current_page": page_no,
+                                "stage_progress": round(page_no * 100 / total_pages),
+                                "ocr_pages": ocr_count,
+                                "failed_pages": failed_pages,
+                            },
+                        )
 
         if ocr_mode == "off" and short_pages:
             raise ServiceError(
@@ -508,9 +591,31 @@ class IngestService:
         image = self._load_image(file_path)
         try:
             if status_callback is not None:
-                status_callback("ocr_processing", None)
+                status_callback(
+                    "ocr_processing",
+                    {
+                        "pages_processed": 0,
+                        "total_pages": 1,
+                        "current_page": 1,
+                        "stage_progress": 0,
+                        "ocr_pages": 0,
+                        "failed_pages": [],
+                    },
+                )
             logger.info("文档触发OCR file=%s mode=%s", file_path, enable_ocr)
             ocr_res = self._ocr_with_timeout(image, timeout_s=timeout_s)
+            if status_callback is not None:
+                status_callback(
+                    "ocr_processing",
+                    {
+                        "pages_processed": 1,
+                        "total_pages": 1,
+                        "current_page": 1,
+                        "stage_progress": 100,
+                        "ocr_pages": 1,
+                        "failed_pages": [],
+                    },
+                )
             return [
                 PageText(
                     page_no=1,
@@ -527,9 +632,33 @@ class IngestService:
                     code="OCR_IMAGE_FAILED",
                     details={"error": str(exc)},
                 ) from exc
+            if status_callback is not None:
+                status_callback(
+                    "ocr_processing",
+                    {
+                        "pages_processed": 1,
+                        "total_pages": 1,
+                        "current_page": 1,
+                        "stage_progress": 100,
+                        "ocr_pages": 0,
+                        "failed_pages": [1],
+                    },
+                )
             return [
                 PageText(page_no=1, text="", ocr_used=False, ocr_confidence_avg=None)
             ], [1]
+
+    @staticmethod
+    def _estimate_total_pages(file_path: Path) -> int:
+        suffix = file_path.suffix.lower()
+        if suffix == ".pdf":
+            try:
+                import fitz
+                with fitz.open(str(file_path)) as pdf:
+                    return max(1, int(pdf.page_count))
+            except Exception:
+                return 1
+        return 1
 
     # 实际OCR功能接口
     def _ocr_with_timeout(self, image: Any, timeout_s: float) -> OCRPageResult:

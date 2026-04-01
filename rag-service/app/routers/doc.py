@@ -17,6 +17,16 @@ router = APIRouter(prefix="/rag/v1", tags=["docs"])
 
 logger = logging.getLogger(__name__)
 
+_STAGE_PROGRESS_RANGES: dict[str, tuple[int, int]] = {
+    "queued": (0, 5),
+    "processing": (5, 35),
+    "ocr_processing": (5, 35),
+    "cleaning": (35, 55),
+    "splitting": (55, 80),
+    "indexing": (80, 99),
+    "done": (100, 100),
+}
+
 # 文档处理接口
 @router.post("/docs/process", response_model=DocsProcessResponse)
 def process_docs(
@@ -81,6 +91,36 @@ def _row_metric(row: dict[str, Any] | None, key: str) -> int | None:
     return int(row[key])
 
 
+def _clamp_percent(value: int | float | None) -> int:
+    if value is None:
+        return 0
+    return max(0, min(100, int(round(value))))
+
+
+def _resolve_stage_progress(stage: str, payload: dict[str, Any] | None = None) -> int:
+    progress = dict(payload or {})
+    if progress.get("stage_progress") is not None:
+        return _clamp_percent(progress.get("stage_progress"))
+    total_pages = progress.get("total_pages")
+    current_page = progress.get("current_page")
+    if total_pages and current_page is not None:
+        return _clamp_percent(current_page * 100 / max(int(total_pages), 1))
+    if stage == "done":
+        return 100
+    return 0
+
+
+def _resolve_progress(stage: str, payload: dict[str, Any] | None = None) -> int:
+    progress = dict(payload or {})
+    if stage == "failed":
+        return _clamp_percent(progress.get("progress"))
+    if stage == "done":
+        return 100
+    start, end = _STAGE_PROGRESS_RANGES.get(stage, (0, 0))
+    stage_progress = _resolve_stage_progress(stage, progress)
+    return _clamp_percent(start + (end - start) * stage_progress / 100)
+
+
 # 文档后台入库接口
 def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
     ingest_service = app.state.services["ingest_service"]
@@ -109,6 +149,8 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     _t0: float = t0,
                 ) -> None:
                     progress = dict(payload or {})
+                    progress["stage_progress"] = _resolve_stage_progress(stage, progress)
+                    progress["progress"] = _resolve_progress(stage, progress)
                     progress["elapsed_ms"] = _elapsed_ms(_t0)
                     job_manager.set_stage(_doc_id, stage, **progress)
 
@@ -127,7 +169,11 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     job_manager.set_stage(
                         doc_id,
                         "splitting",
+                        progress=_resolve_progress("splitting", {"stage_progress": 100}),
+                        stage_progress=100,
                         pages_processed=doc_chunks.pages_processed,
+                        total_pages=doc_chunks.pages_processed,
+                        current_page=doc_chunks.pages_processed,
                         ocr_pages=doc_chunks.ocr_pages,
                         chunk_count=len(doc_chunks.records),
                         failed_pages=doc_chunks.failed_pages,
@@ -160,10 +206,23 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                 return
 
             for doc in processed_docs:
+                indexing_steps = 1
+                if req.rebuild_faiss and doc.records:
+                    indexing_steps += 1
+                if req.rebuild_bm25 and doc.records:
+                    indexing_steps += 1
+                if doc.records and (req.rebuild_faiss or req.rebuild_bm25):
+                    indexing_steps += 1
+                doc.__dict__["indexing_steps"] = indexing_steps
+                doc.__dict__["completed_indexing_steps"] = 0
                 job_manager.set_stage(
                     doc.doc_id,
                     "indexing",
+                    progress=_resolve_progress("indexing", {"stage_progress": 0}),
+                    stage_progress=0,
                     pages_processed=doc.pages_processed,
+                    total_pages=doc.pages_processed,
+                    current_page=doc.pages_processed,
                     ocr_pages=doc.ocr_pages,
                     chunk_count=len(doc.records),
                     failed_pages=doc.failed_pages,
@@ -173,14 +232,90 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
             result = ingest_service.persist_documents(
                 docs=processed_docs, incremental=True
             )
+            for doc in processed_docs:
+                doc.__dict__["completed_indexing_steps"] += 1
+                stage_progress = round(
+                    doc.__dict__["completed_indexing_steps"] * 100
+                    / max(doc.__dict__["indexing_steps"], 1)
+                )
+                job_manager.set_stage(
+                    doc.doc_id,
+                    "indexing",
+                    progress=_resolve_progress("indexing", {"stage_progress": stage_progress}),
+                    stage_progress=stage_progress,
+                    pages_processed=doc.pages_processed,
+                    total_pages=doc.pages_processed,
+                    current_page=doc.pages_processed,
+                    ocr_pages=doc.ocr_pages,
+                    chunk_count=len(doc.records),
+                    failed_pages=doc.failed_pages,
+                    elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
+                )
             if req.rebuild_faiss and result.get("total_chunks", 0) > 0:
                 index_service.build_faiss(chunks_path=result["chunks_path"])
+                for doc in processed_docs:
+                    doc.__dict__["completed_indexing_steps"] += 1
+                    stage_progress = round(
+                        doc.__dict__["completed_indexing_steps"] * 100
+                        / max(doc.__dict__["indexing_steps"], 1)
+                    )
+                    job_manager.set_stage(
+                        doc.doc_id,
+                        "indexing",
+                        progress=_resolve_progress("indexing", {"stage_progress": stage_progress}),
+                        stage_progress=stage_progress,
+                        pages_processed=doc.pages_processed,
+                        total_pages=doc.pages_processed,
+                        current_page=doc.pages_processed,
+                        ocr_pages=doc.ocr_pages,
+                        chunk_count=len(doc.records),
+                        failed_pages=doc.failed_pages,
+                        elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
+                    )
             if req.rebuild_bm25 and result.get("total_chunks", 0) > 0:
                 index_service.build_bm25(chunks_path=result["chunks_path"])
+                for doc in processed_docs:
+                    doc.__dict__["completed_indexing_steps"] += 1
+                    stage_progress = round(
+                        doc.__dict__["completed_indexing_steps"] * 100
+                        / max(doc.__dict__["indexing_steps"], 1)
+                    )
+                    job_manager.set_stage(
+                        doc.doc_id,
+                        "indexing",
+                        progress=_resolve_progress("indexing", {"stage_progress": stage_progress}),
+                        stage_progress=stage_progress,
+                        pages_processed=doc.pages_processed,
+                        total_pages=doc.pages_processed,
+                        current_page=doc.pages_processed,
+                        ocr_pages=doc.ocr_pages,
+                        chunk_count=len(doc.records),
+                        failed_pages=doc.failed_pages,
+                        elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
+                    )
             if result.get("total_chunks", 0) > 0 and (
                 req.rebuild_faiss or req.rebuild_bm25
             ):
                 rag_service.reload_assets(silent=False)
+                for doc in processed_docs:
+                    doc.__dict__["completed_indexing_steps"] += 1
+                    stage_progress = round(
+                        doc.__dict__["completed_indexing_steps"] * 100
+                        / max(doc.__dict__["indexing_steps"], 1)
+                    )
+                    job_manager.set_stage(
+                        doc.doc_id,
+                        "indexing",
+                        progress=_resolve_progress("indexing", {"stage_progress": stage_progress}),
+                        stage_progress=stage_progress,
+                        pages_processed=doc.pages_processed,
+                        total_pages=doc.pages_processed,
+                        current_page=doc.pages_processed,
+                        ocr_pages=doc.ocr_pages,
+                        chunk_count=len(doc.records),
+                        failed_pages=doc.failed_pages,
+                        elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
+                    )
 
             doc_stats = result.get("doc_stats", {})
             for doc in processed_docs:
@@ -198,6 +333,10 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     if elapsed_ms is not None
                     else int(stat.get("elapsed_ms", doc.elapsed_ms)),
                     message=str(stat.get("message", "done")),
+                    progress=100,
+                    stage_progress=100,
+                    total_pages=doc.pages_processed,
+                    current_page=doc.pages_processed,
                 )
     except Exception as exc:
         for item in docs:

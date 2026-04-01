@@ -29,7 +29,11 @@ class ProcessDocItem(BaseModel):
 class IngestDocStatus(BaseModel):
     doc_id: str
     status: IngestStatus
+    progress: int = 0
+    stage_progress: int = 0
     pages_processed: int = 0
+    total_pages: int | None = None
+    current_page: int | None = None
     ocr_pages: int = 0
     message: str = ""
     chunk_count: int = 0

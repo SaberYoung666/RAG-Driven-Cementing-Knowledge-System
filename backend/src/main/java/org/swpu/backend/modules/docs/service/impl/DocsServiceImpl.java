@@ -236,7 +236,9 @@ public class DocsServiceImpl implements DocsService {
 				? ragStatus.status()
 				: Objects.toString(entity.getStatus(), STATUS_UNPROCESSED);
 		String status = normalizeDocStatus(rawStatus);
-		int progress = toProgress(rawStatus);
+		int progress = ragStatus != null && ragStatus.progress() != null
+				? Math.max(0, Math.min(100, ragStatus.progress()))
+				: toProgress(rawStatus);
 		String stage = resolveStage(rawStatus);
 		String message = resolveProcessMessage(rawStatus, ragStatus);
 		String updatedAt = firstNonBlank(
@@ -449,8 +451,17 @@ public class DocsServiceImpl implements DocsService {
 		if (ragStatus.pagesProcessed() != null) {
 			parts.add("已处理页数: " + ragStatus.pagesProcessed());
 		}
+		if (ragStatus.totalPages() != null) {
+			parts.add("总页数: " + ragStatus.totalPages());
+		}
+		if (ragStatus.currentPage() != null) {
+			parts.add("当前页: " + ragStatus.currentPage());
+		}
 		if (ragStatus.ocrPages() != null) {
 			parts.add("OCR页数: " + ragStatus.ocrPages());
+		}
+		if (ragStatus.stageProgress() != null) {
+			parts.add("阶段进度: " + ragStatus.stageProgress() + "%");
 		}
 		if (ragStatus.elapsedMs() != null) {
 			parts.add("耗时: " + ragStatus.elapsedMs() + "ms");

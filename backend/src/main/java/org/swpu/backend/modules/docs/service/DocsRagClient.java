@@ -74,8 +74,15 @@ public class DocsRagClient {
 			@JsonAlias({"doc_id"})
 			String docId,
 			String status,
+			Integer progress,
+			@JsonAlias({"stage_progress"})
+			Integer stageProgress,
 			@JsonAlias({"pages_processed"})
 			Integer pagesProcessed,
+			@JsonAlias({"total_pages"})
+			Integer totalPages,
+			@JsonAlias({"current_page"})
+			Integer currentPage,
 			@JsonAlias({"ocr_pages"})
 			Integer ocrPages,
 			String message,
