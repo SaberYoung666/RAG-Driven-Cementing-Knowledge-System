@@ -95,6 +95,7 @@ export interface UsernameCheckData {
 export interface AuthUser {
     id: number;
     username: string;
+    role: "USER" | "ADMIN";
     createdAt: string;
 }
 

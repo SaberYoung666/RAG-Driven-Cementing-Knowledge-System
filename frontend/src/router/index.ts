@@ -21,7 +21,8 @@ const routes: RouteRecordRaw[] = [
             { path: "admin/logs", redirect: "/admin/logs/overview" },
             { path: "admin/logs/overview", component: () => import("@/pages/LogsOverviewPage.vue") },
             { path: "admin/logs/list", component: () => import("@/pages/LogsPage.vue") },
-            { path: "admin/eval", component: () => import("@/pages/EvalPage.vue") }
+            { path: "admin/eval", component: () => import("@/pages/EvalPage.vue") },
+            { path: "admin/console", component: () => import("@/pages/ConsolePage.vue"), meta: { requiresAdmin: true } }
         ]
     }
 ];
@@ -35,6 +36,7 @@ router.beforeEach(async (to) => {
     const authStore = useAuthStore(pinia);
     const requiresAuth = to.matched.some((record) => record.meta.requiresAuth);
     const guestOnly = to.matched.some((record) => record.meta.guestOnly);
+    const requiresAdmin = to.matched.some((record) => record.meta.requiresAdmin);
 
     if (!authStore.initialized) {
         await authStore.initAuthState();
@@ -50,6 +52,10 @@ router.beforeEach(async (to) => {
     if (guestOnly && authStore.isLoggedIn) {
         const redirect = typeof to.query.redirect === "string" ? to.query.redirect : "/chat";
         return redirect;
+    }
+
+    if (requiresAdmin && authStore.user?.role !== "ADMIN") {
+        return "/chat";
     }
 
     return true;

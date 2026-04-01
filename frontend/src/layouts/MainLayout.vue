@@ -121,6 +121,15 @@
               >
                 日志列表
               </button>
+              <button
+                v-if="isAdmin"
+                class="child-link"
+                :class="{ active: route.path === '/admin/console' }"
+                type="button"
+                @click="go('/admin/console')"
+              >
+                运行控制台
+              </button>
             </div>
           </section>
 
@@ -226,6 +235,7 @@ const chatChildrenOpen = ref(true);
 const logsChildrenOpen = ref(true);
 const userAvatar = ref<string>("");
 const userName = computed(() => authStore.user?.username || "未登录");
+const isAdmin = computed(() => authStore.user?.role === "ADMIN");
 const isChatRoute = computed(() => route.path === "/chat");
 const isLogsRoute = computed(() => route.path.startsWith("/admin/logs"));
 const currentSessionId = computed(() => (typeof route.query.sessionId === "string" ? route.query.sessionId : ""));

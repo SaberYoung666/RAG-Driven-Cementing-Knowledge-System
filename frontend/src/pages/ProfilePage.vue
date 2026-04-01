@@ -4,6 +4,7 @@
       <a-descriptions :column="1" bordered size="middle">
         <a-descriptions-item label="用户编号">{{ authStore.user?.id ?? "-" }}</a-descriptions-item>
         <a-descriptions-item label="用户名">{{ authStore.user?.username ?? "-" }}</a-descriptions-item>
+        <a-descriptions-item label="角色">{{ authStore.user?.role ?? "-" }}</a-descriptions-item>
         <a-descriptions-item label="创建时间">{{ authStore.user?.createdAt ?? "-" }}</a-descriptions-item>
       </a-descriptions>
 

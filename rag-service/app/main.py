@@ -13,6 +13,7 @@ from app.routers.eval import router as eval_router
 from app.routers.health import router as health_router
 from app.routers.index import router as index_router
 from app.routers.ingest import router as ingest_router
+from app.routers.logs import router as logs_router
 
 
 def create_app() -> FastAPI:
@@ -29,6 +30,7 @@ def create_app() -> FastAPI:
         close_state(app)
 
     app.include_router(health_router)
+    app.include_router(logs_router)
     app.include_router(chat_router)
     app.include_router(ingest_router)
     app.include_router(index_router)

@@ -129,6 +129,7 @@ public class AuthServiceImpl implements AuthService {
         return new UserProfileVo(
                 user.getId(),
                 user.getUsername(),
+                user.getRole(),
                 user.getCreatedAt() == null ? null : user.getCreatedAt().toString());
     }
 
