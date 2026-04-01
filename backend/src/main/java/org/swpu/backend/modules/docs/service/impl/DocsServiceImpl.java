@@ -19,6 +19,7 @@ import org.swpu.backend.common.security.TokenUser;
 import org.swpu.backend.modules.logging.LogConstants;
 import org.swpu.backend.modules.logging.model.SystemLogCommand;
 import org.swpu.backend.modules.logging.service.SystemLogService;
+import org.swpu.backend.modules.rag.service.RagAvailabilityService;
 import org.swpu.backend.modules.docs.converter.DocConverter;
 import org.swpu.backend.modules.docs.dto.DocQuery;
 import org.swpu.backend.modules.docs.dto.ProcessDocsRequest;
@@ -60,15 +61,17 @@ public class DocsServiceImpl implements DocsService {
 	private final DocsRagClient docsRagClient;
 	private final TaskExecutor taskExecutor;
 	private final SystemLogService systemLogService;
+	private final RagAvailabilityService ragAvailabilityService;
 	private final Path storageRoot;
 	private final Path tempRoot;
 
-	public DocsServiceImpl(DocMapper docMapper, TokenService tokenService, DocsRagClient docsRagClient, TaskExecutor taskExecutor, SystemLogService systemLogService, @Value("${docs.storage-dir:data/uploads/docs}") String storageDir) {
+	public DocsServiceImpl(DocMapper docMapper, TokenService tokenService, DocsRagClient docsRagClient, TaskExecutor taskExecutor, SystemLogService systemLogService, RagAvailabilityService ragAvailabilityService, @Value("${docs.storage-dir:data/uploads/docs}") String storageDir) {
 		this.docMapper = docMapper;
 		this.tokenService = tokenService;
 		this.docsRagClient = docsRagClient;
 		this.taskExecutor = taskExecutor;
 		this.systemLogService = systemLogService;
+		this.ragAvailabilityService = ragAvailabilityService;
 		this.storageRoot = Paths.get(storageDir).toAbsolutePath().normalize();
 		this.tempRoot = this.storageRoot.resolve("_tmp");
 	}
@@ -156,6 +159,7 @@ public class DocsServiceImpl implements DocsService {
 	// 批量处理文档
 	@Override
 	public ProcessStartResult startProcessBatch(String bearerToken, ProcessDocsRequest request) {
+		ragAvailabilityService.requireProcessingAvailable();
 		Long userId = resolveCurrentUserId(bearerToken);
 		List<String> docIds = normalizeDocIds(request == null ? null : request.getDocIds());
 		if (docIds.isEmpty()) {

@@ -52,6 +52,16 @@ export interface ApiResponse<T> {
     ts?: string;
 }
 
+export interface RagStatus {
+    connected: boolean;
+    serviceAvailable: boolean;
+    chatReady: boolean;
+    indexReady: boolean;
+    bm25Ready: boolean;
+    llmEnabled: boolean;
+    message: string;
+}
+
 export interface DocItem {
     docId: string;
     title: string;

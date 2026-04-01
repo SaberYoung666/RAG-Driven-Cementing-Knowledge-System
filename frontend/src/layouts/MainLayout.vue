@@ -187,6 +187,13 @@
     <a-layout class="app-main">
       <a-layout-content class="app-content">
         <div class="app-content__inner">
+          <a-alert
+            v-if="ragStatusLoaded && !ragStatus.chatReady"
+            class="rag-status-alert"
+            type="warning"
+            show-icon
+            :message="ragAlertMessage"
+          />
           <router-view />
         </div>
       </a-layout-content>
@@ -229,6 +236,7 @@ const route = useRoute();
 const router = useRouter();
 const appStore = useAppStore();
 const authStore = useAuthStore();
+let ragStatusTimer: number | null = null;
 
 const collapsed = ref(false);
 const chatChildrenOpen = ref(true);
@@ -263,6 +271,14 @@ const currentThemeLabel = computed(() => {
   if (appStore.themeMode === "light") return "浅色";
   if (appStore.themeMode === "dark") return "深色";
   return "系统";
+});
+const ragStatus = computed(() => appStore.ragStatus);
+const ragStatusLoaded = computed(() => appStore.ragStatusLoaded);
+const ragAlertMessage = computed(() => {
+  if (!ragStatus.value.connected || !ragStatus.value.serviceAvailable) {
+    return "RAG 服务未连接，问答、评估和文档处理已禁用，请等待服务启动完成。";
+  }
+  return "RAG 正在准备知识库，问答和评估暂不可用。若需要恢复就绪，可先继续执行文档处理。";
 });
 
 function toggleCollapsed() {
@@ -381,10 +397,18 @@ function handleSessionRefresh() {
 
 onMounted(() => {
   refreshSessions();
+  void appStore.refreshRagStatus();
+  ragStatusTimer = window.setInterval(() => {
+    void appStore.refreshRagStatus();
+  }, 10000);
   window.addEventListener("chat-sessions-updated", handleSessionRefresh);
 });
 
 onBeforeUnmount(() => {
+  if (ragStatusTimer !== null) {
+    window.clearInterval(ragStatusTimer);
+    ragStatusTimer = null;
+  }
   window.removeEventListener("chat-sessions-updated", handleSessionRefresh);
 });
 </script>
@@ -790,7 +814,11 @@ onBeforeUnmount(() => {
 
 .app-content__inner {
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
+}
+
+.rag-status-alert {
+  margin-bottom: 12px;
 }
 
 @media (max-width: 960px) {

@@ -1,6 +1,13 @@
 <template>
   <div class="page">
     <a-card title="离线评估（触发任务）" size="small">
+      <a-alert
+        v-if="!appStore.ragStatus.chatReady"
+        type="warning"
+        show-icon
+        style="margin-bottom:12px;"
+        :message="evalBlockedReason"
+      />
       <a-form layout="vertical">
         <a-row :gutter="12">
           <a-col :span="8">
@@ -39,7 +46,7 @@
         </a-row>
 
         <a-space>
-          <a-button type="primary" :loading="loading" @click="run">触发评估</a-button>
+          <a-button type="primary" :loading="loading" :disabled="!appStore.ragStatus.chatReady" @click="run">触发评估</a-button>
           <a-button @click="clear">清空</a-button>
         </a-space>
       </a-form>
@@ -57,10 +64,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { message } from "ant-design-vue";
 import { runEval } from "@/api/eval";
+import { useAppStore } from "@/stores/app";
 
+const appStore = useAppStore();
 const loading = ref(false);
 const datasetId = ref("");
 const modes = ref<string[]>(["dense", "hybrid"]);
@@ -75,8 +84,13 @@ const modeOpts = [
   { value: "hybrid", label: "混合检索" }
 ];
 const rerankOpts = [{ value: false, label: "否" }, { value: true, label: "是" }];
+const evalBlockedReason = computed(() => appStore.ragStatus.message || "RAG 正在准备中，请稍候");
 
 async function run() {
+  if (!appStore.ragStatus.chatReady) {
+    message.warning(evalBlockedReason.value);
+    return;
+  }
   loading.value = true;
   try {
     const res = await runEval({

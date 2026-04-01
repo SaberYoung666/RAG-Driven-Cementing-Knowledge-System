@@ -18,6 +18,7 @@ import org.swpu.backend.modules.logging.LogConstants;
 import org.swpu.backend.modules.logging.model.SystemLogCommand;
 import org.swpu.backend.modules.logging.service.SystemLogService;
 import org.swpu.backend.modules.eval.service.EvalRagClient;
+import org.swpu.backend.modules.rag.service.RagAvailabilityService;
 
 @RestController
 @RequestMapping("/api/v1/eval")
@@ -28,16 +29,19 @@ public class EvalController {
 	private final EvalRagClient evalRagClient;
 	private final TaskExecutor taskExecutor;
 	private final SystemLogService systemLogService;
+	private final RagAvailabilityService ragAvailabilityService;
 
-	public EvalController(EvalRagClient evalRagClient, TaskExecutor taskExecutor, SystemLogService systemLogService) {
+	public EvalController(EvalRagClient evalRagClient, TaskExecutor taskExecutor, SystemLogService systemLogService, RagAvailabilityService ragAvailabilityService) {
 		this.evalRagClient = evalRagClient;
 		this.taskExecutor = taskExecutor;
 		this.systemLogService = systemLogService;
+		this.ragAvailabilityService = ragAvailabilityService;
 	}
 
 	@PostMapping("/run")
 	@Operation(summary = "触发离线评测")
 	public ApiResponse<EvalRunResult> run(@RequestBody(required = false) EvalRunRequest request) {
+		ragAvailabilityService.requireChatReady();
 		String jobId = UUID.randomUUID().toString();
 		EvalRunRequest req = request == null ? new EvalRunRequest(null, List.of("dense", "hybrid"), List.of(false, true), 6, 20, 0.5) : request;
 		systemLogService.record(new SystemLogCommand()

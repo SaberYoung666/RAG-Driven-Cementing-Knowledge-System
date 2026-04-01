@@ -1,6 +1,13 @@
 <template>
   <div class="page docs-page">
     <a-card title="文档管理" size="small">
+      <a-alert
+        v-if="!appStore.ragStatus.connected || !appStore.ragStatus.serviceAvailable"
+        type="warning"
+        show-icon
+        style="margin-bottom:12px;"
+        :message="docsProcessBlockedReason"
+      />
       <a-space style="margin-bottom:12px;">
         <a-upload :beforeUpload="beforeUpload" :showUploadList="false">
           <a-button type="primary">上传并入库</a-button>
@@ -26,7 +33,7 @@
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'actions'">
             <a-space size="small">
-              <a-button size="small" @click="onProcessAction(record)">{{ processActionLabel(record) }}</a-button>
+              <a-button size="small" :disabled="isProcessActionDisabled(record)" @click="onProcessAction(record)">{{ processActionLabel(record) }}</a-button>
               <a-popconfirm title="确认删除？" @confirm="remove(record.docId)">
                 <a-button danger size="small">删除</a-button>
               </a-popconfirm>
@@ -67,10 +74,12 @@ import { message } from "ant-design-vue";
 import { ReloadOutlined } from "@ant-design/icons-vue";
 import type { TablePaginationConfig } from "ant-design-vue";
 import { ingestFile, listDocs, deleteDoc, processDoc, getDocProcessInfo } from "@/api/docs";
+import { useAppStore } from "@/stores/app";
 import type { DocItem, DocProcessInfo } from "@/types";
 
 const MAX_UPLOAD_SIZE_MB = 500;
 const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
+const appStore = useAppStore();
 
 const loading = ref(false);
 const items = ref<DocItem[]>([]);
@@ -119,6 +128,7 @@ const progressStatus = computed(() => {
   if (s === "READY") return "success";
   return "active";
 });
+const docsProcessBlockedReason = computed(() => appStore.ragStatus.message || "RAG 服务未连接，请稍后再试");
 
 function normalizeStatus(status?: string) {
   const s = (status || "").toUpperCase();
@@ -148,6 +158,12 @@ function processActionLabel(record: DocItem) {
   if (s === "FAILED") return "重新处理";
   if (s === "READY") return "查看详情";
   return "处理";
+}
+
+function isProcessActionDisabled(record: DocItem) {
+  const s = normalizeStatus(record.status);
+  if (s === "PROCESSING" || s === "READY") return false;
+  return !appStore.ragStatus.connected || !appStore.ragStatus.serviceAvailable;
 }
 
 async function load(options: { silent?: boolean } = {}) {
@@ -206,6 +222,10 @@ async function triggerProcess(docId: string) {
 
 async function onProcessAction(record: DocItem) {
   const s = normalizeStatus(record.status);
+  if ((s === "UNPROCESSED" || s === "FAILED") && isProcessActionDisabled(record)) {
+    message.warning(docsProcessBlockedReason.value);
+    return;
+  }
   if (s === "PROCESSING" || s === "READY") {
     await openProcessModal(record.docId);
     return;

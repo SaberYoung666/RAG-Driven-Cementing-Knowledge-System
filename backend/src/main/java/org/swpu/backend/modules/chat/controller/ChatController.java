@@ -26,6 +26,7 @@ import org.swpu.backend.modules.chat.service.RagClient;
 import org.swpu.backend.modules.logging.LogConstants;
 import org.swpu.backend.modules.logging.model.SystemLogCommand;
 import org.swpu.backend.modules.logging.service.SystemLogService;
+import org.swpu.backend.modules.rag.service.RagAvailabilityService;
 import reactor.core.publisher.Mono;
 
 @RestController
@@ -42,13 +43,15 @@ public class ChatController {
 	private final ChatLogService chatLogService;
 	private final SystemLogService systemLogService;
 	private final AuthContextService authContextService;
+	private final RagAvailabilityService ragAvailabilityService;
 
-	public ChatController(RagClient ragClient, CitationDisplayService citationDisplayService, ChatLogService chatLogService, SystemLogService systemLogService, AuthContextService authContextService) {
+	public ChatController(RagClient ragClient, CitationDisplayService citationDisplayService, ChatLogService chatLogService, SystemLogService systemLogService, AuthContextService authContextService, RagAvailabilityService ragAvailabilityService) {
 		this.ragClient = ragClient;
 		this.citationDisplayService = citationDisplayService;
 		this.chatLogService = chatLogService;
 		this.systemLogService = systemLogService;
 		this.authContextService = authContextService;
+		this.ragAvailabilityService = ragAvailabilityService;
 	}
 
 	@PostMapping("/chat")
@@ -58,6 +61,7 @@ public class ChatController {
 			@RequestHeader(name = "Authorization", required = false) String authorization,
 			@Valid @RequestBody ChatDto.ChatReq req) {
 		AuthContextService.CurrentUser currentUser = authContextService.resolveOptional(authorization);
+		ragAvailabilityService.requireChatReady();
 		// TODO: 调试固定问答，联调完成后删除。
 		if (isDebugQuery(req.query())) {
 			ChatDto.RagResp rawResp = new ChatDto.RagResp(DEBUG_ANSWER, false, java.util.List.of(), java.util.List.of(), null, 0);

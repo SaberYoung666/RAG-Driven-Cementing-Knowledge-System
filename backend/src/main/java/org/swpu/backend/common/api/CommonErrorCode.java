@@ -8,6 +8,7 @@ public enum CommonErrorCode implements ErrorCode {
     FORBIDDEN(403, "forbidden"),
     NOT_FOUND(404, "not found"),
     PAYLOAD_TOO_LARGE(413, "payload too large"),
+    SERVICE_UNAVAILABLE(503, "service unavailable"),
     INTERNAL_ERROR(500, "internal error");
 
     private final int code;

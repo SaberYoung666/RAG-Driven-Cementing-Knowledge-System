@@ -1,5 +1,12 @@
 <template>
   <div class="chat-page">
+    <a-alert
+      v-if="!appStore.ragStatus.chatReady"
+      class="chat-rag-alert"
+      type="warning"
+      show-icon
+      :message="ragChatBlockedReason"
+    />
     <main class="chat-main" ref="scrollRef">
       <div class="chat-container">
           <div v-if="messages.length === 0" class="empty">
@@ -74,8 +81,8 @@
     <footer class="composer">
       <div class="composer-inner">
         <div class="composer-panel">
-          <textarea ref="inputRef" v-model="input" class="textarea" :placeholder="isGenerating ? '生成中…' : '有问题，尽管问'"
-            :disabled="isGenerating" rows="1" @keydown="onKeydown" @input="autoGrow" />
+          <textarea ref="inputRef" v-model="input" class="textarea" :placeholder="isGenerating ? '生成中…' : (appStore.ragStatus.chatReady ? '有问题，尽管问' : 'RAG 正在准备中，请等待')"
+            :disabled="isGenerating || !appStore.ragStatus.chatReady" rows="1" @keydown="onKeydown" @input="autoGrow" />
 
           <div class="composer-tools">
             <div class="tools-left">
@@ -135,7 +142,7 @@
               </a-popover>
 
               <button class="tool-think" :class="{ active: thinkEnabled }" type="button" aria-label="思考模式"
-                @click="toggleThinking">
+                :disabled="!appStore.ragStatus.chatReady" @click="toggleThinking">
                 <BulbOutlined />
                 <span>思考</span>
               </button>
@@ -224,6 +231,7 @@ import { AudioOutlined, BulbOutlined, DownOutlined, SendOutlined, SettingOutline
 import MarkdownIt from "markdown-it";
 import hljs from "highlight.js";
 import { createSession, getSessionDetail, postChat } from "@/api/chat";
+import { useAppStore } from "@/stores/app";
 import type { Citation as ApiCitation, RetrievedChunk } from "@/types";
 import helperHeadImg from "@/assets/helper_headimg.png";
 
@@ -307,6 +315,7 @@ type SpeechRecognitionCtor = new () => SpeechRecognitionInstance;
 
 const route = useRoute();
 const router = useRouter();
+const appStore = useAppStore();
 const scrollRef = ref<HTMLElement | null>(null);
 const inputRef = ref<HTMLTextAreaElement | null>(null);
 
@@ -424,7 +433,8 @@ const md = new MarkdownIt({
 });
 md.use(inlineEvidencePlugin);
 
-const canSend = computed(() => input.value.trim().length > 0 && !isGenerating.value);
+const canSend = computed(() => input.value.trim().length > 0 && !isGenerating.value && appStore.ragStatus.chatReady);
+const ragChatBlockedReason = computed(() => appStore.ragStatus.message || "RAG 正在准备中，请稍候");
 
 function renderMarkdown(text: string) {
   return md.render(text || "");
@@ -717,6 +727,10 @@ async function ensureSession(question: string) {
 }
 
 async function send() {
+  if (!appStore.ragStatus.chatReady) {
+    message.warning(ragChatBlockedReason.value);
+    return;
+  }
   if (!canSend.value) return;
 
   const q = input.value.trim();
@@ -828,6 +842,11 @@ onBeforeUnmount(() => {
   flex-direction: column;
   background: radial-gradient(1200px 600px at 50% -100px, rgba(var(--cp-accent-rgb), 0.14), transparent 60%), var(--cp-bg);
   color: var(--cp-text);
+}
+
+.chat-rag-alert {
+  width: min(980px, calc(100% - 32px));
+  margin: 0 auto 12px;
 }
 
 .chat-main {
@@ -1367,6 +1386,13 @@ onBeforeUnmount(() => {
   border-color: rgba(var(--cp-accent-rgb), 0.55);
   background: rgba(var(--cp-accent-rgb), 0.22);
   color: var(--cp-accent);
+}
+
+.tool-think:disabled,
+.send-fab:disabled,
+.tool-btn:disabled,
+.textarea:disabled {
+  cursor: not-allowed;
 }
 
 .send-fab {
