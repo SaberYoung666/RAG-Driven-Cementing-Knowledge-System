@@ -19,6 +19,14 @@ public record DocProcessInfo(
 		@Schema(description = "更新时间")
 		String updatedAt,
 		@Schema(description = "详情")
-		String detail
+		String detail,
+		@Schema(description = "追踪 ID")
+		String traceId,
+		@Schema(description = "异常类型")
+		String errorType,
+		@Schema(description = "失败阶段")
+		String failedStage,
+		@Schema(description = "调试详情")
+		String debugDetail
 ) {
 }

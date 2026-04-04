@@ -57,6 +57,10 @@ class Settings:
     def normalize_embeddings(self) -> bool:
         return bool(_deep_get(self.config, "indexing.normalize_embeddings", True))
 
+    @property
+    def expose_error_details(self) -> bool:
+        return bool(_deep_get(self.config, "debug.expose_error_details", False))
+
 # 载入设置，该设置将用于全局
 def load_settings() -> Settings:
     default_path = DEFAULT_CONFIG_PATH if DEFAULT_CONFIG_PATH.exists() else LEGACY_CONFIG_PATH

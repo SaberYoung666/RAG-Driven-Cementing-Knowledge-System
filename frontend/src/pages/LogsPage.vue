@@ -245,6 +245,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
 import dayjs, { type Dayjs } from "dayjs";
 import { message } from "ant-design-vue";
 import type { TablePaginationConfig } from "ant-design-vue";
@@ -258,6 +259,7 @@ import {
 } from "@/api/logs";
 
 const defaultRange = () => [dayjs().subtract(7, "day"), dayjs()] as [Dayjs, Dayjs];
+const route = useRoute();
 
 const loading = ref(false);
 const items = ref<SystemLogItem[]>([]);
@@ -448,6 +450,9 @@ function handleTableChange(nextPagination: TablePaginationConfig) {
 }
 
 onMounted(() => {
+  if (typeof route.query.traceId === "string" && route.query.traceId.trim()) {
+    traceId.value = route.query.traceId.trim();
+  }
   load();
 });
 </script>

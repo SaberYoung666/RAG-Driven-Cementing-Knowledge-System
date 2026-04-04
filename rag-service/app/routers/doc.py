@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import time
+import traceback
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
@@ -76,7 +78,7 @@ def ingest_status(doc_id: str, request: Request):
     row = job_manager.get(doc_id)
     if not row:
         raise HTTPException(status_code=404, detail=f"doc_id not found: {doc_id}")
-    return IngestDocStatus(**row)
+    return IngestDocStatus(**_public_status_row(request.app, row))
 
 
 def _elapsed_ms(started_at: float | None) -> int | None:
@@ -121,6 +123,40 @@ def _resolve_progress(stage: str, payload: dict[str, Any] | None = None) -> int:
     return _clamp_percent(start + (end - start) * stage_progress / 100)
 
 
+def _public_status_row(app: Any, row: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(row or {})
+    settings = app.state.services.get("settings")
+    expose_error_details = bool(
+        getattr(settings, "expose_error_details", False)
+    )
+    if not expose_error_details:
+        payload["debug_detail"] = None
+    return payload
+
+
+def _build_failure_context(
+    row: dict[str, Any] | None,
+    *,
+    doc_id: str,
+    file_path: Path,
+    source_name: str,
+    trace_id: str,
+    elapsed_ms: int | None,
+) -> dict[str, Any]:
+    row_payload = dict(row or {})
+    return {
+        "doc_id": doc_id,
+        "file_path": str(file_path),
+        "source_name": source_name,
+        "stage": row_payload.get("status"),
+        "pages_processed": row_payload.get("pages_processed"),
+        "current_page": row_payload.get("current_page"),
+        "ocr_pages": row_payload.get("ocr_pages"),
+        "elapsed_ms": elapsed_ms,
+        "trace_id": trace_id,
+    }
+
+
 # 文档后台入库接口
 def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
     ingest_service = app.state.services["ingest_service"]
@@ -131,6 +167,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
     docs = req.docs or []
     processed_docs = []
     started_at_map: dict[str, float] = {}
+    trace_id_map: dict[str, str] = {}
     try:
         with job_manager.run_lock:
             for item in docs:
@@ -138,8 +175,11 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                 source_name = item.source_name or Path(item.file_path).name
                 file_path = Path(item.file_path)
                 t0 = time.perf_counter()
+                trace_id = uuid4().hex
                 started_at_map[doc_id] = t0
+                trace_id_map[doc_id] = trace_id
                 job_manager.start(doc_id)
+                job_manager.update(doc_id, trace_id=trace_id)
 
                 def _stage_update(
                     stage: str,
@@ -152,6 +192,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     progress["stage_progress"] = _resolve_stage_progress(stage, progress)
                     progress["progress"] = _resolve_progress(stage, progress)
                     progress["elapsed_ms"] = _elapsed_ms(_t0)
+                    progress["trace_id"] = trace_id_map.get(_doc_id)
                     job_manager.set_stage(_doc_id, stage, **progress)
 
                 try:
@@ -178,9 +219,30 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         chunk_count=len(doc_chunks.records),
                         failed_pages=doc_chunks.failed_pages,
                         elapsed_ms=_elapsed_ms(t0),
+                        trace_id=trace_id,
+                        error_type=None,
+                        failed_stage=None,
+                        debug_detail=None,
                     )
                 except ServiceError as exc:
                     row = job_manager.get(doc_id)
+                    elapsed_ms = _elapsed_ms(t0)
+                    debug_detail = traceback.format_exc()
+                    failure_context = _build_failure_context(
+                        row,
+                        doc_id=doc_id,
+                        file_path=file_path,
+                        source_name=source_name,
+                        trace_id=trace_id,
+                        elapsed_ms=elapsed_ms,
+                    )
+                    logger.exception(
+                        "文档处理失败(ServiceError) doc_id=%s trace_id=%s stage=%s",
+                        doc_id,
+                        trace_id,
+                        failure_context.get("stage"),
+                        extra=failure_context,
+                    )
                     job_manager.fail(
                         doc_id,
                         message=exc.message,
@@ -188,10 +250,31 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         pages_processed=_row_metric(row, "pages_processed"),
                         ocr_pages=_row_metric(row, "ocr_pages"),
                         failed_pages=list((row or {}).get("failed_pages") or []),
-                        elapsed_ms=_elapsed_ms(t0),
+                        elapsed_ms=elapsed_ms,
+                        trace_id=trace_id,
+                        error_type=exc.__class__.__name__,
+                        debug_detail=debug_detail,
+                        failed_stage=(row or {}).get("status"),
                     )
                 except Exception as exc:
                     row = job_manager.get(doc_id)
+                    elapsed_ms = _elapsed_ms(t0)
+                    debug_detail = traceback.format_exc()
+                    failure_context = _build_failure_context(
+                        row,
+                        doc_id=doc_id,
+                        file_path=file_path,
+                        source_name=source_name,
+                        trace_id=trace_id,
+                        elapsed_ms=elapsed_ms,
+                    )
+                    logger.exception(
+                        "文档处理失败(Exception) doc_id=%s trace_id=%s stage=%s",
+                        doc_id,
+                        trace_id,
+                        failure_context.get("stage"),
+                        extra=failure_context,
+                    )
                     job_manager.fail(
                         doc_id,
                         message="document processing failed",
@@ -199,7 +282,11 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         pages_processed=_row_metric(row, "pages_processed"),
                         ocr_pages=_row_metric(row, "ocr_pages"),
                         failed_pages=list((row or {}).get("failed_pages") or []),
-                        elapsed_ms=_elapsed_ms(t0),
+                        elapsed_ms=elapsed_ms,
+                        trace_id=trace_id,
+                        error_type=exc.__class__.__name__,
+                        debug_detail=debug_detail,
+                        failed_stage=(row or {}).get("status"),
                     )
 
             if not processed_docs:
@@ -227,6 +314,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     chunk_count=len(doc.records),
                     failed_pages=doc.failed_pages,
                     elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
+                    trace_id=trace_id_map.get(doc.doc_id),
                 )
 
             result = ingest_service.persist_documents(
@@ -250,6 +338,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     chunk_count=len(doc.records),
                     failed_pages=doc.failed_pages,
                     elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
+                    trace_id=trace_id_map.get(doc.doc_id),
                 )
             if req.rebuild_faiss and result.get("total_chunks", 0) > 0:
                 index_service.build_faiss(chunks_path=result["chunks_path"])
@@ -271,6 +360,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         chunk_count=len(doc.records),
                         failed_pages=doc.failed_pages,
                         elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
+                        trace_id=trace_id_map.get(doc.doc_id),
                     )
             if req.rebuild_bm25 and result.get("total_chunks", 0) > 0:
                 index_service.build_bm25(chunks_path=result["chunks_path"])
@@ -292,6 +382,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         chunk_count=len(doc.records),
                         failed_pages=doc.failed_pages,
                         elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
+                        trace_id=trace_id_map.get(doc.doc_id),
                     )
             if result.get("total_chunks", 0) > 0 and (
                 req.rebuild_faiss or req.rebuild_bm25
@@ -315,6 +406,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         chunk_count=len(doc.records),
                         failed_pages=doc.failed_pages,
                         elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
+                        trace_id=trace_id_map.get(doc.doc_id),
                     )
 
             doc_stats = result.get("doc_stats", {})
@@ -337,12 +429,36 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     stage_progress=100,
                     total_pages=doc.pages_processed,
                     current_page=doc.pages_processed,
+                    trace_id=trace_id_map.get(doc.doc_id),
+                    error_type=None,
+                    failed_stage=None,
+                    debug_detail=None,
                 )
     except Exception as exc:
+        pipeline_debug_detail = traceback.format_exc()
         for item in docs:
             row = job_manager.get(item.doc_id)
             if row and row.get("status") in {"done", "failed"}:
                 continue
+            trace_id = trace_id_map.get(item.doc_id) or uuid4().hex
+            file_path = Path(item.file_path)
+            source_name = item.source_name or file_path.name
+            elapsed_ms = _elapsed_ms(started_at_map.get(item.doc_id))
+            failure_context = _build_failure_context(
+                row,
+                doc_id=item.doc_id,
+                file_path=file_path,
+                source_name=source_name,
+                trace_id=trace_id,
+                elapsed_ms=elapsed_ms,
+            )
+            logger.exception(
+                "文档处理管线失败 doc_id=%s trace_id=%s stage=%s",
+                item.doc_id,
+                trace_id,
+                failure_context.get("stage"),
+                extra=failure_context,
+            )
             job_manager.fail(
                 item.doc_id,
                 message="ingest pipeline failed",
@@ -350,5 +466,9 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                 pages_processed=_row_metric(row, "pages_processed"),
                 ocr_pages=_row_metric(row, "ocr_pages"),
                 failed_pages=list((row or {}).get("failed_pages") or []),
-                elapsed_ms=_elapsed_ms(started_at_map.get(item.doc_id)),
+                elapsed_ms=elapsed_ms,
+                trace_id=trace_id,
+                error_type=exc.__class__.__name__,
+                debug_detail=pipeline_debug_detail,
+                failed_stage=(row or {}).get("status"),
             )

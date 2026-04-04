@@ -57,4 +57,6 @@ llm: # 生成模型配置（用于问答生成）
   temperature: 0.2 # 采样温度，越低越稳定
   max_tokens: 2000 # 单次生成最大输出 token 数
 
+debug:
+  expose_error_details: false # 是否在文档处理状态接口中返回完整 traceback
 

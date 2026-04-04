@@ -66,16 +66,31 @@
           <template v-else>{{ processPercent }}%</template>
         </a-descriptions-item>
         <a-descriptions-item label="阶段">{{ processInfo?.stage || "-" }}</a-descriptions-item>
+        <a-descriptions-item label="失败阶段">{{ processInfo?.failedStage || "-" }}</a-descriptions-item>
+        <a-descriptions-item label="异常类型">{{ processInfo?.errorType || "-" }}</a-descriptions-item>
+        <a-descriptions-item label="Trace ID">
+          <a-space v-if="processInfo?.traceId" size="small">
+            <span>{{ processInfo.traceId }}</span>
+            <a-button type="link" size="small" @click="openLogsForTrace(processInfo.traceId)">查看日志</a-button>
+          </a-space>
+          <template v-else>-</template>
+        </a-descriptions-item>
         <a-descriptions-item label="分块数">{{ processInfo?.chunkCount ?? "-" }}</a-descriptions-item>
         <a-descriptions-item label="更新时间">{{ processInfo?.updatedAt || "-" }}</a-descriptions-item>
         <a-descriptions-item label="说明">{{ processInfo?.message || processInfo?.detail || "-" }}</a-descriptions-item>
       </a-descriptions>
+      <a-collapse v-if="processInfo?.debugDetail" style="margin-top: 12px;">
+        <a-collapse-panel key="debug" header="调试详情">
+          <pre class="debug-detail">{{ processInfo.debugDetail }}</pre>
+        </a-collapse-panel>
+      </a-collapse>
     </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { message } from "ant-design-vue";
 import { ReloadOutlined } from "@ant-design/icons-vue";
 import type { TablePaginationConfig } from "ant-design-vue";
@@ -86,6 +101,7 @@ import type { DocItem, DocProcessInfo } from "@/types";
 const MAX_UPLOAD_SIZE_MB = 500;
 const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
 const appStore = useAppStore();
+const router = useRouter();
 
 const loading = ref(false);
 const items = ref<DocItem[]>([]);
@@ -258,6 +274,10 @@ function bindRowEvents(record: DocItem) {
   };
 }
 
+function openLogsForTrace(traceId: string) {
+  router.push({ path: "/admin/logs/list", query: { traceId } });
+}
+
 async function remove(docId: string) {
   const res = await deleteDoc(docId);
   if (res.code !== 0) return message.error(res.message || "删除失败");
@@ -298,5 +318,14 @@ onBeforeUnmount(() => {
 <style scoped>
 .docs-page {
   padding-top: 0;
+}
+
+.debug-detail {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.6;
 }
 </style>

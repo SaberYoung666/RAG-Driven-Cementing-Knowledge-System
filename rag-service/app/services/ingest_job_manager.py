@@ -57,6 +57,10 @@ class IngestJobManager:
                 "enable_ocr": enable_ocr,
                 "message": message,
                 "error": None,
+                "trace_id": None,
+                "error_type": None,
+                "failed_stage": None,
+                "debug_detail": None,
                 "failed_pages": [],
                 "started_at": None,
                 "finished_at": None,
@@ -107,6 +111,9 @@ class IngestJobManager:
                 "message": message,
                 "failed_pages": failed_pages or [],
                 "error": None,
+                "error_type": None,
+                "failed_stage": None,
+                "debug_detail": None,
                 "finished_at": _utc_now(),
                 "elapsed_ms": elapsed_ms,
             }
@@ -125,6 +132,7 @@ class IngestJobManager:
         ocr_pages: int | None = None,
         failed_pages: list[int] | None = None,
         elapsed_ms: int | None = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         existing = self.get(doc_id) or {}
         payload: Dict[str, Any] = {
@@ -138,11 +146,13 @@ class IngestJobManager:
             "stage_progress": int(existing.get("stage_progress") or 0),
             "total_pages": existing.get("total_pages"),
             "current_page": existing.get("current_page"),
+            "failed_stage": existing.get("status"),
         }
         if pages_processed is not None:
             payload["pages_processed"] = pages_processed
         if ocr_pages is not None:
             payload["ocr_pages"] = ocr_pages
+        payload.update(kwargs)
         return self.update(doc_id, **payload)
 
     # 获取文档处理状态

@@ -83,6 +83,10 @@ export interface DocProcessInfo {
     chunkCount?: number;
     updatedAt?: string;
     detail?: string;
+    traceId?: string;
+    errorType?: string;
+    failedStage?: string;
+    debugDetail?: string;
 }
 
 export interface ProcessStartResult {

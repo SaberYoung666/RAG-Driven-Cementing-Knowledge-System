@@ -255,7 +255,11 @@ public class DocsServiceImpl implements DocsService {
 				message,
 				entity.getChunkCount(),
 				updatedAt,
-				detail
+				detail,
+				ragStatus == null ? null : ragStatus.traceId(),
+				ragStatus == null ? null : ragStatus.errorType(),
+				ragStatus == null ? null : ragStatus.failedStage(),
+				ragStatus == null ? null : ragStatus.debugDetail()
 		);
 	}
 

@@ -38,6 +38,10 @@ class IngestDocStatus(BaseModel):
     message: str = ""
     chunk_count: int = 0
     error: str | None = None
+    trace_id: str | None = None
+    error_type: str | None = None
+    failed_stage: str | None = None
+    debug_detail: str | None = None
     failed_pages: list[int] = Field(default_factory=list)
     started_at: str | None = None
     finished_at: str | None = None
