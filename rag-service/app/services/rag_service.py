@@ -17,6 +17,7 @@ from app.schemas.chat import (
     Citation,
     RetrievedChunk,
 )
+from app.services.model_registry import get_cross_encoder, get_sentence_transformer
 from app.services.common import Retrieved, minmax_norm, tokenize_zh
 
 
@@ -245,7 +246,6 @@ class _DenseRetriever:
     ):
         import faiss
         import numpy as np
-        from sentence_transformers import SentenceTransformer
 
         self.np = np
         self.index_dir = index_dir
@@ -258,7 +258,7 @@ class _DenseRetriever:
         # 加载文档存储，构建 chunk_id 到文本和元数据的映射
         self.docstore = self._load_docstore(index_dir / "docstore.jsonl")
         # 创建一个具体embedding模型对象
-        self.model = SentenceTransformer(embedding_model)
+        self.model = get_sentence_transformer(embedding_model)
         # 是否对向量进行归一化处理
         self.normalize = normalize_embeddings
 
@@ -380,9 +380,7 @@ class _HybridRetriever:
 # 重排器
 class _CrossReranker:
     def __init__(self, model_name: str):
-        from sentence_transformers import CrossEncoder
-
-        self.model = CrossEncoder(model_name)
+        self.model = get_cross_encoder(model_name)
 
     # 重排接口
     def rerank(

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from app.core.config import Settings
+from app.services.model_registry import get_sentence_transformer
 
 
 class IndexService:
@@ -23,13 +24,12 @@ class IndexService:
     def build_faiss(self, chunks_path: str | None = None) -> Dict[str, Any]:
         import faiss  # type: ignore
         import numpy as np  # type: ignore
-        from sentence_transformers import SentenceTransformer  # type: ignore
 
         cp = Path(chunks_path) if chunks_path else self.settings.chunks_path
         chunk_ids, texts, metas = self._read_chunks(cp)
         self.index_dir.mkdir(parents=True, exist_ok=True)
 
-        model = SentenceTransformer(self.settings.embedding_model)
+        model = get_sentence_transformer(self.settings.embedding_model)
         embeds = model.encode(
             texts,
             convert_to_numpy=True,
