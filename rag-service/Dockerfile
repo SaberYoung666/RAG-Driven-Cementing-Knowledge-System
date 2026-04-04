@@ -21,7 +21,7 @@ ENV PIP_DEFAULT_TIMEOUT=600
 ENV PIP_TIMEOUT=600
 
 RUN python -m pip install --upgrade pip && \
-    pip install --no-cache-dir --timeout 600 --retries 20 \
+    pip install --timeout 600 --retries 20 \
     --index-url https://download.pytorch.org/whl/cpu torch && \
     pip install --timeout 600 --retries 20 -r requirements.txt
 
