@@ -157,6 +157,15 @@ def _build_failure_context(
     }
 
 
+def _publish_status(app: Any, row: dict[str, Any] | None) -> None:
+    if not row:
+        return
+    callback_client = app.state.services.get("backend_callback_client")
+    if callback_client is None or not hasattr(callback_client, "publish_status"):
+        return
+    callback_client.publish_status(row)
+
+
 # 文档后台入库接口
 def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
     ingest_service = app.state.services["ingest_service"]
@@ -178,8 +187,18 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                 trace_id = uuid4().hex
                 started_at_map[doc_id] = t0
                 trace_id_map[doc_id] = trace_id
-                job_manager.start(doc_id)
-                job_manager.update(doc_id, trace_id=trace_id)
+                row = job_manager.start(doc_id)
+                row = job_manager.update(
+                    doc_id,
+                    trace_id=trace_id,
+                    status="processing",
+                    message="processing",
+                    error=None,
+                    error_type=None,
+                    failed_stage=None,
+                    debug_detail=None,
+                )
+                _publish_status(app, row)
 
                 def _stage_update(
                     stage: str,
@@ -193,7 +212,8 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     progress["progress"] = _resolve_progress(stage, progress)
                     progress["elapsed_ms"] = _elapsed_ms(_t0)
                     progress["trace_id"] = trace_id_map.get(_doc_id)
-                    job_manager.set_stage(_doc_id, stage, **progress)
+                    row = job_manager.set_stage(_doc_id, stage, **progress)
+                    _publish_status(app, row)
 
                 try:
                     # 执行文档导入逻辑
@@ -207,7 +227,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         status_callback=_stage_update,
                     )
                     processed_docs.append(doc_chunks)
-                    job_manager.set_stage(
+                    row = job_manager.set_stage(
                         doc_id,
                         "splitting",
                         progress=_resolve_progress("splitting", {"stage_progress": 100}),
@@ -224,6 +244,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         failed_stage=None,
                         debug_detail=None,
                     )
+                    _publish_status(app, row)
                 except ServiceError as exc:
                     row = job_manager.get(doc_id)
                     elapsed_ms = _elapsed_ms(t0)
@@ -243,7 +264,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         failure_context.get("stage"),
                         extra=failure_context,
                     )
-                    job_manager.fail(
+                    row = job_manager.fail(
                         doc_id,
                         message=exc.message,
                         error=str(exc.details or exc.message),
@@ -256,6 +277,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         debug_detail=debug_detail,
                         failed_stage=(row or {}).get("status"),
                     )
+                    _publish_status(app, row)
                 except Exception as exc:
                     row = job_manager.get(doc_id)
                     elapsed_ms = _elapsed_ms(t0)
@@ -275,7 +297,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         failure_context.get("stage"),
                         extra=failure_context,
                     )
-                    job_manager.fail(
+                    row = job_manager.fail(
                         doc_id,
                         message="document processing failed",
                         error=str(exc),
@@ -288,6 +310,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         debug_detail=debug_detail,
                         failed_stage=(row or {}).get("status"),
                     )
+                    _publish_status(app, row)
 
             if not processed_docs:
                 return
@@ -302,7 +325,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     indexing_steps += 1
                 doc.__dict__["indexing_steps"] = indexing_steps
                 doc.__dict__["completed_indexing_steps"] = 0
-                job_manager.set_stage(
+                row = job_manager.set_stage(
                     doc.doc_id,
                     "indexing",
                     progress=_resolve_progress("indexing", {"stage_progress": 0}),
@@ -316,6 +339,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
                     trace_id=trace_id_map.get(doc.doc_id),
                 )
+                _publish_status(app, row)
 
             result = ingest_service.persist_documents(
                 docs=processed_docs, incremental=True
@@ -326,7 +350,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     doc.__dict__["completed_indexing_steps"] * 100
                     / max(doc.__dict__["indexing_steps"], 1)
                 )
-                job_manager.set_stage(
+                row = job_manager.set_stage(
                     doc.doc_id,
                     "indexing",
                     progress=_resolve_progress("indexing", {"stage_progress": stage_progress}),
@@ -340,6 +364,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
                     trace_id=trace_id_map.get(doc.doc_id),
                 )
+                _publish_status(app, row)
             if req.rebuild_faiss and result.get("total_chunks", 0) > 0:
                 index_service.build_faiss(chunks_path=result["chunks_path"])
                 for doc in processed_docs:
@@ -348,7 +373,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         doc.__dict__["completed_indexing_steps"] * 100
                         / max(doc.__dict__["indexing_steps"], 1)
                     )
-                    job_manager.set_stage(
+                    row = job_manager.set_stage(
                         doc.doc_id,
                         "indexing",
                         progress=_resolve_progress("indexing", {"stage_progress": stage_progress}),
@@ -362,6 +387,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
                         trace_id=trace_id_map.get(doc.doc_id),
                     )
+                    _publish_status(app, row)
             if req.rebuild_bm25 and result.get("total_chunks", 0) > 0:
                 index_service.build_bm25(chunks_path=result["chunks_path"])
                 for doc in processed_docs:
@@ -370,7 +396,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         doc.__dict__["completed_indexing_steps"] * 100
                         / max(doc.__dict__["indexing_steps"], 1)
                     )
-                    job_manager.set_stage(
+                    row = job_manager.set_stage(
                         doc.doc_id,
                         "indexing",
                         progress=_resolve_progress("indexing", {"stage_progress": stage_progress}),
@@ -384,6 +410,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
                         trace_id=trace_id_map.get(doc.doc_id),
                     )
+                    _publish_status(app, row)
             if result.get("total_chunks", 0) > 0 and (
                 req.rebuild_faiss or req.rebuild_bm25
             ):
@@ -394,7 +421,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         doc.__dict__["completed_indexing_steps"] * 100
                         / max(doc.__dict__["indexing_steps"], 1)
                     )
-                    job_manager.set_stage(
+                    row = job_manager.set_stage(
                         doc.doc_id,
                         "indexing",
                         progress=_resolve_progress("indexing", {"stage_progress": stage_progress}),
@@ -408,12 +435,13 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
                         trace_id=trace_id_map.get(doc.doc_id),
                     )
+                    _publish_status(app, row)
 
             doc_stats = result.get("doc_stats", {})
             for doc in processed_docs:
                 stat = doc_stats.get(doc.doc_id, {})
                 elapsed_ms = _elapsed_ms(started_at_map.get(doc.doc_id))
-                job_manager.done(
+                row = job_manager.done(
                     doc.doc_id,
                     pages_processed=int(
                         stat.get("pages_processed", doc.pages_processed)
@@ -434,6 +462,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     failed_stage=None,
                     debug_detail=None,
                 )
+                _publish_status(app, row)
     except Exception as exc:
         pipeline_debug_detail = traceback.format_exc()
         for item in docs:
@@ -459,7 +488,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                 failure_context.get("stage"),
                 extra=failure_context,
             )
-            job_manager.fail(
+            row = job_manager.fail(
                 item.doc_id,
                 message="ingest pipeline failed",
                 error=str(exc),
@@ -472,3 +501,4 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                 debug_detail=pipeline_debug_detail,
                 failed_stage=(row or {}).get("status"),
             )
+            _publish_status(app, row)

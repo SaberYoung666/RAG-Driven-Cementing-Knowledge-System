@@ -9,6 +9,7 @@ from fastapi import FastAPI
 
 from app.core.config import settings
 from app.services.eval_service import EvalService
+from app.services.backend_callback_client import BackendCallbackClient
 from app.services.ingest_job_manager import IngestJobManager
 from app.services.index_service import IndexService
 from app.services.ingest_service import IngestService
@@ -27,6 +28,7 @@ def init_state(app: FastAPI) -> Dict[str, Any]:
     ingest_job_manager = IngestJobManager(job_store_path)
     eval_service = EvalService(settings)
     rag_service = RAGService(settings)
+    backend_callback_client = BackendCallbackClient(settings)
     rag_service.reload_assets(silent=True)
 
     state: Dict[str, Any] = {
@@ -36,6 +38,7 @@ def init_state(app: FastAPI) -> Dict[str, Any]:
         "ingest_job_manager": ingest_job_manager,
         "eval_service": eval_service,
         "rag_service": rag_service,
+        "backend_callback_client": backend_callback_client,
     }
     app.state.services = state
     logger.info("资源初始化完成")
@@ -50,3 +53,9 @@ def close_state(app: FastAPI) -> None:
             ingest_service.close()
         except Exception:
             logger.exception("释放OCR资源失败")
+    backend_callback_client = services.get("backend_callback_client")
+    if backend_callback_client is not None and hasattr(backend_callback_client, "close"):
+        try:
+            backend_callback_client.close()
+        except Exception:
+            logger.exception("释放backend回调客户端失败")

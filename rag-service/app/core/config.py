@@ -61,6 +61,47 @@ class Settings:
     def expose_error_details(self) -> bool:
         return bool(_deep_get(self.config, "debug.expose_error_details", False))
 
+    @property
+    def backend_callback_base_url(self) -> str | None:
+        value = os.getenv("BACKEND_CALLBACK_BASE_URL")
+        if value:
+            return value.strip()
+        cfg_value = _deep_get(self.config, "backend.callback_base_url", "")
+        return str(cfg_value).strip() or None
+
+    @property
+    def backend_docs_status_callback_path(self) -> str:
+        value = os.getenv("BACKEND_DOCS_STATUS_CALLBACK_PATH")
+        if value:
+            return value.strip()
+        return str(
+            _deep_get(
+                self.config,
+                "backend.docs_status_callback_path",
+                "/api/internal/rag/docs/status",
+            )
+        ).strip()
+
+    @property
+    def backend_callback_secret(self) -> str | None:
+        value = os.getenv("BACKEND_CALLBACK_SECRET")
+        if value:
+            return value.strip()
+        cfg_value = _deep_get(self.config, "backend.callback_secret", "")
+        return str(cfg_value).strip() or None
+
+    @property
+    def backend_callback_timeout_seconds(self) -> float:
+        value = os.getenv("BACKEND_CALLBACK_TIMEOUT_SECONDS")
+        if value:
+            try:
+                return float(value)
+            except ValueError:
+                pass
+        return float(
+            _deep_get(self.config, "backend.callback_timeout_seconds", 5.0)
+        )
+
 # 载入设置，该设置将用于全局
 def load_settings() -> Settings:
     default_path = DEFAULT_CONFIG_PATH if DEFAULT_CONFIG_PATH.exists() else LEGACY_CONFIG_PATH

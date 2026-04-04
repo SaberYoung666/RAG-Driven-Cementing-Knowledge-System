@@ -32,8 +32,10 @@ rag:
   base-url: http://192.168.1.37:8000
   docs-process-path: /rag/v1/docs/process
   ingest-status-path-template: /rag/v1/ingest/{docId}/status
+  status-callback-secret: ${RAG_STATUS_CALLBACK_SECRET:change-me-rag-callback}
 docs:
   storage-dir: data/uploads/docs
+  process-status-store-path: data/doc_process_status.json
 auth:
   token-secret: ${AUTH_TOKEN_SECRET:change-me-please-use-env}
   token-expire-seconds: 86400

@@ -60,3 +60,8 @@ llm: # 生成模型配置（用于问答生成）
 debug:
   expose_error_details: false # 是否在文档处理状态接口中返回完整 traceback
 
+backend:
+  callback_base_url: http://localhost:8080 # backend 内部回调基础地址
+  docs_status_callback_path: /api/internal/rag/docs/status # 文档状态回调接口
+  callback_secret: change-me-rag-callback # 回调鉴权密钥
+  callback_timeout_seconds: 5.0 # 回调超时时间

@@ -23,12 +23,15 @@ import org.swpu.backend.modules.rag.service.RagAvailabilityService;
 import org.swpu.backend.modules.docs.converter.DocConverter;
 import org.swpu.backend.modules.docs.dto.DocQuery;
 import org.swpu.backend.modules.docs.dto.ProcessDocsRequest;
+import org.swpu.backend.modules.docs.dto.RagDocStatusCallbackRequest;
 import org.swpu.backend.modules.docs.entity.DocEntity;
 import org.swpu.backend.modules.docs.mapper.dao.DocMapper;
+import org.swpu.backend.modules.docs.service.DocProcessStatusStore;
 import org.swpu.backend.modules.docs.service.DocsRagClient;
 import org.swpu.backend.modules.docs.service.DocsService;
 import org.swpu.backend.modules.docs.vo.DocItem;
 import org.swpu.backend.modules.docs.vo.DocProcessInfo;
+import org.swpu.backend.modules.docs.vo.DocProcessStatusSnapshot;
 import org.swpu.backend.modules.docs.vo.IngestResult;
 import org.swpu.backend.modules.docs.vo.ProcessStartResult;
 
@@ -59,16 +62,18 @@ public class DocsServiceImpl implements DocsService {
 	private final DocMapper docMapper;
 	private final TokenService tokenService;
 	private final DocsRagClient docsRagClient;
+	private final DocProcessStatusStore docProcessStatusStore;
 	private final TaskExecutor taskExecutor;
 	private final SystemLogService systemLogService;
 	private final RagAvailabilityService ragAvailabilityService;
 	private final Path storageRoot;
 	private final Path tempRoot;
 
-	public DocsServiceImpl(DocMapper docMapper, TokenService tokenService, DocsRagClient docsRagClient, TaskExecutor taskExecutor, SystemLogService systemLogService, RagAvailabilityService ragAvailabilityService, @Value("${docs.storage-dir:data/uploads/docs}") String storageDir) {
+	public DocsServiceImpl(DocMapper docMapper, TokenService tokenService, DocsRagClient docsRagClient, DocProcessStatusStore docProcessStatusStore, TaskExecutor taskExecutor, SystemLogService systemLogService, RagAvailabilityService ragAvailabilityService, @Value("${docs.storage-dir:data/uploads/docs}") String storageDir) {
 		this.docMapper = docMapper;
 		this.tokenService = tokenService;
 		this.docsRagClient = docsRagClient;
+		this.docProcessStatusStore = docProcessStatusStore;
 		this.taskExecutor = taskExecutor;
 		this.systemLogService = systemLogService;
 		this.ragAvailabilityService = ragAvailabilityService;
@@ -98,7 +103,6 @@ public class DocsServiceImpl implements DocsService {
 		wrapper.orderByDesc("upload_time");
 
 		Page<DocEntity> pageResult = docMapper.selectPage(new Page<>(page, size), wrapper);
-		refreshProcessingStatuses(pageResult.getRecords());
 		List<DocItem> items = DocConverter.toItems(pageResult.getRecords());
 		return PageResult.of(items, pageResult.getTotal(), page, size);
 	}
@@ -230,37 +234,101 @@ public class DocsServiceImpl implements DocsService {
 			throw new BusinessException(CommonErrorCode.NOT_FOUND, "未找到文档");
 		}
 
-		DocsRagClient.RagIngestStatus ragStatus = syncStatusFromRag(entity);
-
-		String rawStatus = ragStatus != null && StringUtils.hasText(ragStatus.status())
-				? ragStatus.status()
+		DocProcessStatusSnapshot snapshot = docProcessStatusStore.get(entity.getDocId());
+		String rawStatus = snapshot != null && StringUtils.hasText(snapshot.status())
+				? snapshot.status()
 				: Objects.toString(entity.getStatus(), STATUS_UNPROCESSED);
 		String status = normalizeDocStatus(rawStatus);
-		int progress = ragStatus != null && ragStatus.progress() != null
-				? Math.max(0, Math.min(100, ragStatus.progress()))
+		int progress = snapshot != null && snapshot.progress() != null
+				? Math.max(0, Math.min(100, snapshot.progress()))
 				: toProgress(rawStatus);
 		String stage = resolveStage(rawStatus);
-		String message = resolveProcessMessage(rawStatus, ragStatus);
+		String message = resolveProcessMessage(rawStatus, snapshot);
 		String updatedAt = firstNonBlank(
-				ragStatus == null ? null : ragStatus.updatedAt(),
-				ragStatus == null ? null : ragStatus.finishedAt(),
+				snapshot == null ? null : snapshot.updatedAt(),
+				snapshot == null ? null : snapshot.finishedAt(),
 				entity.getUploadTime()
 		);
-		String detail = buildProcessDetail(ragStatus, message);
+		String detail = buildProcessDetail(snapshot, message);
 		return new DocProcessInfo(
 				entity.getDocId(),
 				status,
 				progress,
 				stage,
 				message,
-				entity.getChunkCount(),
+				snapshot != null && snapshot.chunkCount() != null ? snapshot.chunkCount() : entity.getChunkCount(),
 				updatedAt,
 				detail,
-				ragStatus == null ? null : ragStatus.traceId(),
-				ragStatus == null ? null : ragStatus.errorType(),
-				ragStatus == null ? null : ragStatus.failedStage(),
-				ragStatus == null ? null : ragStatus.debugDetail()
+				snapshot == null ? null : snapshot.traceId(),
+				snapshot == null ? null : snapshot.errorType(),
+				snapshot == null ? null : snapshot.failedStage(),
+				snapshot == null ? null : snapshot.debugDetail()
 		);
+	}
+
+	@Override
+	public void acceptRagStatusCallback(RagDocStatusCallbackRequest request) {
+		if (request == null || !StringUtils.hasText(request.docId())) {
+			throw new BusinessException(CommonErrorCode.BAD_REQUEST, "docId为空");
+		}
+		QueryWrapper<DocEntity> wrapper = new QueryWrapper<>();
+		wrapper.eq("doc_id", request.docId()).eq("deleted", false);
+		DocEntity entity = docMapper.selectOne(wrapper);
+		if (entity == null) {
+			throw new BusinessException(CommonErrorCode.NOT_FOUND, "未找到文档");
+		}
+
+		DocProcessStatusSnapshot snapshot = new DocProcessStatusSnapshot(
+				request.docId(),
+				request.status(),
+				request.progress(),
+				request.stageProgress(),
+				request.pagesProcessed(),
+				request.totalPages(),
+				request.currentPage(),
+				request.ocrPages(),
+				request.chunkCount(),
+				request.message(),
+				request.error(),
+				request.traceId(),
+				request.errorType(),
+				request.failedStage(),
+				request.debugDetail(),
+				request.failedPages(),
+				request.startedAt(),
+				request.finishedAt(),
+				request.updatedAt(),
+				request.elapsedMs()
+		);
+		DocProcessStatusSnapshot resolved = docProcessStatusStore.upsert(snapshot);
+
+		String mapped = normalizeDocStatus(resolved == null ? request.status() : resolved.status());
+		entity.setStatus(mapped);
+		Integer chunkCount = resolved == null ? request.chunkCount() : resolved.chunkCount();
+		if (chunkCount != null && chunkCount >= 0) {
+			entity.setChunkCount(chunkCount);
+		}
+		docMapper.updateById(entity);
+
+		systemLogService.record(new SystemLogCommand()
+				.setTraceId(firstNonBlank(request.traceId(), TraceContext.getTraceId()))
+				.setModule("DOCS")
+				.setSource(LogConstants.SOURCE_ASYNC)
+				.setAction("RAG_STATUS_CALLBACK")
+				.setLevel(LogConstants.LEVEL_INFO)
+				.setSuccess(true)
+				.setMessage("Accepted document status callback from RAG")
+				.setUserId(entity.getUserId())
+				.setVisibilityScope(entity.getUserId() == null ? LogConstants.SCOPE_SYSTEM : LogConstants.SCOPE_PRIVATE)
+				.setResourceType("DOC")
+				.setResourceId(entity.getDocId())
+				.setDetails(mapOf(
+						"docId", entity.getDocId(),
+						"status", resolved == null ? request.status() : resolved.status(),
+						"mappedStatus", mapped,
+						"chunkCount", entity.getChunkCount(),
+						"traceId", resolved == null ? request.traceId() : resolved.traceId()
+				)));
 	}
 
 	private void markProcessFailed(List<String> docIds) {
@@ -341,43 +409,6 @@ public class DocsServiceImpl implements DocsService {
 		return path.toString();
 	}
 
-	private void refreshProcessingStatuses(List<DocEntity> docs) {
-		if (docs == null || docs.isEmpty()) {
-			return;
-		}
-		for (DocEntity doc : docs) {
-			if (doc == null || !isProcessingStatus(doc.getStatus())) {
-				continue;
-			}
-			syncStatusFromRag(doc);
-		}
-	}
-
-	// 异步从RAG获取文档处理进度
-	private DocsRagClient.RagIngestStatus syncStatusFromRag(DocEntity entity) {
-		if (entity == null || !StringUtils.hasText(entity.getDocId())) {
-			return null;
-		}
-		try {
-			DocsRagClient.RagIngestStatus rag = docsRagClient.getIngestStatus(entity.getDocId()).block(Duration.ofSeconds(5));
-			if (rag == null || !StringUtils.hasText(rag.status())) {
-				return rag;
-			}
-			String mapped = normalizeDocStatus(rag.status());
-			entity.setStatus(mapped);
-			if (rag.chunkCount() != null && rag.chunkCount() >= 0) {
-				entity.setChunkCount(rag.chunkCount());
-			}
-			docMapper.updateById(entity);
-			recordDocLog(entity.getUserId(), "SYNC_DOC_STATUS", "Synchronized document status from RAG", entity.getDocId(), mapOf("docId", entity.getDocId(), "docName", entity.getTitle(), "status", mapped, "chunkCount", entity.getChunkCount()));
-			return rag;
-		} catch (Exception ex) {
-			log.debug("获取RAG文档处理进度失败: docId={}", entity.getDocId(), ex);
-			recordAsyncDocLog(entity.getUserId(), entity.getDocId(), "SYNC_DOC_STATUS_FAILED", "Failed to sync document status", ex, null);
-			return null;
-		}
-	}
-
 	private String normalizeDocStatus(String raw) {
 		String s = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
 		return switch (s) {
@@ -418,13 +449,13 @@ public class DocsServiceImpl implements DocsService {
 		};
 	}
 
-	private String resolveProcessMessage(String rawStatus, DocsRagClient.RagIngestStatus ragStatus) {
-		if (ragStatus != null) {
-			if (StringUtils.hasText(ragStatus.error())) {
-				return ragStatus.error().trim();
+	private String resolveProcessMessage(String rawStatus, DocProcessStatusSnapshot snapshot) {
+		if (snapshot != null) {
+			if (StringUtils.hasText(snapshot.error())) {
+				return snapshot.error().trim();
 			}
-			if (StringUtils.hasText(ragStatus.message())) {
-				return ragStatus.message().trim();
+			if (StringUtils.hasText(snapshot.message())) {
+				return snapshot.message().trim();
 			}
 		}
 		String normalized = rawStatus == null ? "" : rawStatus.trim().toLowerCase(Locale.ROOT);
@@ -441,37 +472,37 @@ public class DocsServiceImpl implements DocsService {
 		};
 	}
 
-	private String buildProcessDetail(DocsRagClient.RagIngestStatus ragStatus, String fallbackMessage) {
-		if (ragStatus == null) {
+	private String buildProcessDetail(DocProcessStatusSnapshot snapshot, String fallbackMessage) {
+		if (snapshot == null) {
 			return fallbackMessage;
 		}
 		List<String> parts = new ArrayList<>();
-		if (StringUtils.hasText(ragStatus.message())) {
-			parts.add(ragStatus.message().trim());
+		if (StringUtils.hasText(snapshot.message())) {
+			parts.add(snapshot.message().trim());
 		}
-		if (StringUtils.hasText(ragStatus.error())) {
-			parts.add("错误: " + ragStatus.error().trim());
+		if (StringUtils.hasText(snapshot.error())) {
+			parts.add("错误: " + snapshot.error().trim());
 		}
-		if (ragStatus.pagesProcessed() != null) {
-			parts.add("已处理页数: " + ragStatus.pagesProcessed());
+		if (snapshot.pagesProcessed() != null) {
+			parts.add("已处理页数: " + snapshot.pagesProcessed());
 		}
-		if (ragStatus.totalPages() != null) {
-			parts.add("总页数: " + ragStatus.totalPages());
+		if (snapshot.totalPages() != null) {
+			parts.add("总页数: " + snapshot.totalPages());
 		}
-		if (ragStatus.currentPage() != null) {
-			parts.add("当前页: " + ragStatus.currentPage());
+		if (snapshot.currentPage() != null) {
+			parts.add("当前页: " + snapshot.currentPage());
 		}
-		if (ragStatus.ocrPages() != null) {
-			parts.add("OCR页数: " + ragStatus.ocrPages());
+		if (snapshot.ocrPages() != null) {
+			parts.add("OCR页数: " + snapshot.ocrPages());
 		}
-		if (ragStatus.stageProgress() != null) {
-			parts.add("阶段进度: " + ragStatus.stageProgress() + "%");
+		if (snapshot.stageProgress() != null) {
+			parts.add("阶段进度: " + snapshot.stageProgress() + "%");
 		}
-		if (ragStatus.elapsedMs() != null) {
-			parts.add("耗时: " + ragStatus.elapsedMs() + "ms");
+		if (snapshot.elapsedMs() != null) {
+			parts.add("耗时: " + snapshot.elapsedMs() + "ms");
 		}
-		if (ragStatus.failedPages() != null && !ragStatus.failedPages().isEmpty()) {
-			parts.add("失败页: " + ragStatus.failedPages());
+		if (snapshot.failedPages() != null && !snapshot.failedPages().isEmpty()) {
+			parts.add("失败页: " + snapshot.failedPages());
 		}
 		return parts.isEmpty() ? fallbackMessage : String.join(" | ", parts);
 	}

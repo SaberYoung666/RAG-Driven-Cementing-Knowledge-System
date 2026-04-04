@@ -117,6 +117,11 @@ const processInfo = ref<DocProcessInfo | null>(null);
 let autoRefreshTimer: number | null = null;
 let isLoadingDocs = false;
 
+function isTerminalStatus(status?: string) {
+  const s = normalizeStatus(status);
+  return s === "READY" || s === "FAILED";
+}
+
 const columns = [
   { title: "文档编号", dataIndex: "docId", key: "docId", width: 220 },
   { title: "标题", dataIndex: "title", key: "title" },
@@ -218,6 +223,7 @@ function onTableChange(p: TablePaginationConfig) {
 
 async function openProcessModal(docId: string) {
   processDocId.value = docId;
+  processInfo.value = null;
   processModalOpen.value = true;
   processModalLoading.value = true;
   await refreshProcessInfo();
@@ -225,6 +231,7 @@ async function openProcessModal(docId: string) {
 
 async function refreshProcessInfo(silent = false) {
   if (!processDocId.value) return;
+  if (processInfo.value?.docId === processDocId.value && isTerminalStatus(processInfo.value?.status)) return;
   if (!silent) processModalLoading.value = true;
   try {
     const res = await getDocProcessInfo(processDocId.value);
@@ -234,6 +241,9 @@ async function refreshProcessInfo(silent = false) {
       return;
     }
     processInfo.value = res.data;
+    if (isTerminalStatus(processInfo.value?.status)) {
+      void load({ silent: true });
+    }
   } catch {
     processInfo.value = { docId: processDocId.value, message: "暂无处理详情" };
   } finally {
@@ -300,8 +310,10 @@ async function beforeUpload(file: File) {
 onMounted(() => {
   void load();
   autoRefreshTimer = window.setInterval(() => {
-    void load({ silent: true });
-    if (processModalOpen.value && processDocId.value) {
+    if (items.value.some((item) => normalizeStatus(item.status) === "PROCESSING")) {
+      void load({ silent: true });
+    }
+    if (processModalOpen.value && processDocId.value && !isTerminalStatus(processInfo.value?.status)) {
       void refreshProcessInfo(true);
     }
   }, 2000);

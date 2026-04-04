@@ -4,6 +4,7 @@ import org.springframework.web.multipart.MultipartFile;
 import org.swpu.backend.common.api.PageResult;
 import org.swpu.backend.modules.docs.dto.DocQuery;
 import org.swpu.backend.modules.docs.dto.ProcessDocsRequest;
+import org.swpu.backend.modules.docs.dto.RagDocStatusCallbackRequest;
 import org.swpu.backend.modules.docs.vo.DocItem;
 import org.swpu.backend.modules.docs.vo.DocProcessInfo;
 import org.swpu.backend.modules.docs.vo.IngestResult;
@@ -22,4 +23,6 @@ public interface DocsService {
     ProcessStartResult startProcessBatch(String bearerToken, ProcessDocsRequest request);
 
     DocProcessInfo getProcessInfo(String bearerToken, String docId);
+
+    void acceptRagStatusCallback(RagDocStatusCallbackRequest request);
 }
