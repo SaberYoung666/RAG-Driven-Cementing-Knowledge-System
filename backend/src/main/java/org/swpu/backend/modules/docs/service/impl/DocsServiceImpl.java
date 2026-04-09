@@ -128,6 +128,9 @@ public class DocsServiceImpl implements DocsService {
 		entity.setDeleted(true);
 		entity.setStatus(STATUS_DELETED);
 		boolean deleted = docMapper.updateById(entity) > 0;
+		if (deleted) {
+			docProcessStatusStore.remove(entity.getDocId());
+		}
 		recordDocLog(userId, "DELETE_DOC", deleted ? "Deleted document" : "Delete document skipped", docId, mapOf("deleted", deleted, "docName", entity.getTitle(), "status", entity.getStatus(), "chunkCount", entity.getChunkCount()));
 		return deleted;
 	}
@@ -189,6 +192,7 @@ public class DocsServiceImpl implements DocsService {
 		for (DocEntity doc : docs) {
 			doc.setStatus(STATUS_PROCESSING);
 			docMapper.updateById(doc);
+			docProcessStatusStore.remove(doc.getDocId());
 			acceptedIds.add(doc.getDocId());
 			acceptedDocs.add(doc);
 		}
@@ -574,6 +578,7 @@ public class DocsServiceImpl implements DocsService {
 			} else {
 				docMapper.updateById(entity);
 			}
+			docProcessStatusStore.remove(entity.getDocId());
 			recordAsyncDocLog(userId, entity.getDocId(), "INGEST_STORED", "Stored uploaded document", null, mapOf("jobId", jobId, "docId", entity.getDocId(), "docName", entity.getTitle(), "hash", fileHash, "source", entity.getSource(), "status", entity.getStatus(), "chunkCount", entity.getChunkCount()));
 		} catch (Exception ex) {
 			log.error("Async ingest job failed: jobId={}, userId={}, file={}", jobId, userId, originalFileName, ex);

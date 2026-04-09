@@ -59,6 +59,20 @@ public class DocProcessStatusStore {
 		}
 	}
 
+	public void remove(String docId) {
+		if (!StringUtils.hasText(docId)) {
+			return;
+		}
+		lock.writeLock().lock();
+		try {
+			if (snapshots.remove(docId.trim()) != null) {
+				save();
+			}
+		} finally {
+			lock.writeLock().unlock();
+		}
+	}
+
 	private void load() {
 		lock.writeLock().lock();
 		try {
@@ -89,15 +103,10 @@ public class DocProcessStatusStore {
 		if (existing == null) {
 			return incoming;
 		}
-		if (isTerminal(existing.status()) && !isTerminal(incoming.status())) {
-			return existing;
-		}
-		if (isTerminal(existing.status()) && isTerminal(incoming.status())) {
-			Instant existingAt = parseInstant(existing.updatedAt());
-			Instant incomingAt = parseInstant(incoming.updatedAt());
-			if (existingAt != null && incomingAt != null && existingAt.isAfter(incomingAt)) {
-				return existing;
-			}
+		Instant existingAt = latestInstant(existing);
+		Instant incomingAt = latestInstant(incoming);
+		if (existingAt != null && incomingAt != null) {
+			return existingAt.isAfter(incomingAt) ? existing : incoming;
 		}
 		return incoming;
 	}
@@ -120,5 +129,20 @@ public class DocProcessStatusStore {
 		} catch (Exception ex) {
 			return null;
 		}
+	}
+
+	private Instant latestInstant(DocProcessStatusSnapshot snapshot) {
+		if (snapshot == null) {
+			return null;
+		}
+		Instant updatedAt = parseInstant(snapshot.updatedAt());
+		if (updatedAt != null) {
+			return updatedAt;
+		}
+		Instant finishedAt = parseInstant(snapshot.finishedAt());
+		if (finishedAt != null) {
+			return finishedAt;
+		}
+		return parseInstant(snapshot.startedAt());
 	}
 }
