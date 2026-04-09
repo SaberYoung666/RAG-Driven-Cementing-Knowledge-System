@@ -24,6 +24,7 @@ import org.swpu.backend.modules.docs.converter.DocConverter;
 import org.swpu.backend.modules.docs.dto.DocQuery;
 import org.swpu.backend.modules.docs.dto.ProcessDocsRequest;
 import org.swpu.backend.modules.docs.dto.RagDocStatusCallbackRequest;
+import org.swpu.backend.modules.docs.dto.ReindexRequest;
 import org.swpu.backend.modules.docs.entity.DocEntity;
 import org.swpu.backend.modules.docs.mapper.dao.DocMapper;
 import org.swpu.backend.modules.docs.service.DocProcessStatusStore;
@@ -34,6 +35,7 @@ import org.swpu.backend.modules.docs.vo.DocProcessInfo;
 import org.swpu.backend.modules.docs.vo.DocProcessStatusSnapshot;
 import org.swpu.backend.modules.docs.vo.IngestResult;
 import org.swpu.backend.modules.docs.vo.ProcessStartResult;
+import org.swpu.backend.modules.docs.vo.ReindexResult;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -219,6 +221,56 @@ public class DocsServiceImpl implements DocsService {
 				.subscribe();
 
 		return new ProcessStartResult(requestId, acceptedIds, acceptedIds.size());
+	}
+
+	@Override
+	public ReindexResult rebuildIndex(String bearerToken, ReindexRequest request) {
+		ragAvailabilityService.requireProcessingAvailable();
+		Long userId = resolveCurrentUserId(bearerToken);
+		boolean rebuildFaiss = request == null || request.rebuildFaiss() == null || request.rebuildFaiss();
+		boolean rebuildBm25 = request == null || request.rebuildBm25() == null || request.rebuildBm25();
+		if (!rebuildFaiss && !rebuildBm25) {
+			throw new BusinessException(CommonErrorCode.BAD_REQUEST, "至少选择一种索引重建方式");
+		}
+
+		String faissMessage = null;
+		String bm25Message = null;
+		if (rebuildFaiss) {
+			DocsRagClient.RagIndexBuildResponse faissResp = docsRagClient.buildFaiss().block(Duration.ofMinutes(30));
+			if (faissResp == null || !faissResp.ok()) {
+				throw new BusinessException(CommonErrorCode.SERVICE_UNAVAILABLE, "FAISS 索引重建失败");
+			}
+			faissMessage = faissResp.message();
+		}
+		if (rebuildBm25) {
+			DocsRagClient.RagIndexBuildResponse bm25Resp = docsRagClient.buildBm25().block(Duration.ofMinutes(30));
+			if (bm25Resp == null || !bm25Resp.ok()) {
+				throw new BusinessException(CommonErrorCode.SERVICE_UNAVAILABLE, "BM25 索引重建失败");
+			}
+			bm25Message = bm25Resp.message();
+		}
+
+		String summary = rebuildFaiss && rebuildBm25
+				? "FAISS 与 BM25 索引已重建完成"
+				: (rebuildFaiss ? "FAISS 索引已重建完成" : "BM25 索引已重建完成");
+		systemLogService.record(new SystemLogCommand()
+				.setTraceId(TraceContext.getTraceId())
+				.setModule("DOCS")
+				.setSource(LogConstants.SOURCE_BUSINESS)
+				.setAction("REBUILD_INDEX")
+				.setLevel(LogConstants.LEVEL_INFO)
+				.setSuccess(true)
+				.setMessage(summary)
+				.setUserId(userId)
+				.setVisibilityScope(LogConstants.SCOPE_PRIVATE)
+				.setResourceType("RAG_INDEX")
+				.setDetails(mapOf(
+						"rebuildFaiss", rebuildFaiss,
+						"rebuildBm25", rebuildBm25,
+						"faissMessage", faissMessage,
+						"bm25Message", bm25Message
+				)));
+		return new ReindexResult(rebuildFaiss, rebuildBm25, faissMessage, bm25Message, summary);
 	}
 
 	// 获取处理进度信息
@@ -470,7 +522,7 @@ public class DocsServiceImpl implements DocsService {
 			case "cleaning" -> "正在清洗文本";
 			case "splitting" -> "正在切分文档";
 			case "indexing" -> "正在构建索引";
-			case "done", "success", "ready", "已处理" -> "文档已完成切分与索引";
+			case "done", "success", "ready", "已处理" -> "文档已完成切分，待重建索引后可检索";
 			case "failed", "error", "处理失败" -> "处理失败，请重试";
 			default -> "未开始处理";
 		};

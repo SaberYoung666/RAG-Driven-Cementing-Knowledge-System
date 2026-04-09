@@ -5,10 +5,12 @@ import org.swpu.backend.common.api.PageResult;
 import org.swpu.backend.modules.docs.dto.DocQuery;
 import org.swpu.backend.modules.docs.dto.ProcessDocsRequest;
 import org.swpu.backend.modules.docs.dto.RagDocStatusCallbackRequest;
+import org.swpu.backend.modules.docs.dto.ReindexRequest;
 import org.swpu.backend.modules.docs.vo.DocItem;
 import org.swpu.backend.modules.docs.vo.DocProcessInfo;
 import org.swpu.backend.modules.docs.vo.IngestResult;
 import org.swpu.backend.modules.docs.vo.ProcessStartResult;
+import org.swpu.backend.modules.docs.vo.ReindexResult;
 
 // 文档服务接口
 public interface DocsService {
@@ -21,6 +23,8 @@ public interface DocsService {
     ProcessStartResult startProcessSingle(String bearerToken, String docId);
 
     ProcessStartResult startProcessBatch(String bearerToken, ProcessDocsRequest request);
+
+    ReindexResult rebuildIndex(String bearerToken, ReindexRequest request);
 
     DocProcessInfo getProcessInfo(String bearerToken, String docId);
 

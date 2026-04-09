@@ -28,6 +28,9 @@ class IndexService:
         cp = Path(chunks_path) if chunks_path else self.settings.chunks_path
         chunk_ids, texts, metas = self._read_chunks(cp)
         self.index_dir.mkdir(parents=True, exist_ok=True)
+        batch_size = int(
+            (self.settings.config.get("indexing", {}) or {}).get("batch_size", 8)
+        )
 
         model = get_sentence_transformer(
             self.settings.embedding_model,
@@ -38,6 +41,7 @@ class IndexService:
             texts,
             convert_to_numpy=True,
             show_progress_bar=False,
+            batch_size=max(1, batch_size),
             normalize_embeddings=self.settings.normalize_embeddings,
         ).astype(np.float32)
 

@@ -23,6 +23,7 @@ services:
     build:
       context: ./rag-service
     container_name: cement-rag-service
+    cpus: 2.0
     restart: unless-stopped
     environment:
       BACKEND_CALLBACK_BASE_URL: http://backend:8080
@@ -30,6 +31,10 @@ services:
       HF_ENDPOINT: https://hf-mirror.com
       HF_HUB_ETAG_TIMEOUT: ${HF_HUB_ETAG_TIMEOUT:-30}
       HF_HUB_DOWNLOAD_TIMEOUT: ${HF_HUB_DOWNLOAD_TIMEOUT:-300}
+      OMP_NUM_THREADS: 2
+      MKL_NUM_THREADS: 2
+      OPENBLAS_NUM_THREADS: 2
+      NUMEXPR_NUM_THREADS: 2
       NO_PROXY: localhost,127.0.0.1,backend,postgres,rag-service
     ports:
       - "${RAG_PORT:-8000}:8000"

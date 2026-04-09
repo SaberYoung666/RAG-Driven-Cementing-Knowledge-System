@@ -13,25 +13,47 @@ public class DocsRagClient {
 	private final WebClient webClient;
 	private final String processPath;
 	private final String statusPathTemplate;
+	private final String buildFaissPath;
+	private final String buildBm25Path;
 
 	public DocsRagClient(
 			@Value("${rag.base-url:http://localhost:8000}") String baseUrl,
 			@Value("${rag.docs-process-path:/rag/v1/docs/process}") String processPath,
-			@Value("${rag.ingest-status-path-template:/rag/v1/ingest/{docId}/status}") String statusPathTemplate) {
+			@Value("${rag.ingest-status-path-template:/rag/v1/ingest/{docId}/status}") String statusPathTemplate,
+			@Value("${rag.index-build-faiss-path:/rag/v1/index/build/faiss}") String buildFaissPath,
+			@Value("${rag.index-build-bm25-path:/rag/v1/index/build/bm25}") String buildBm25Path) {
 		this.webClient = WebClient.builder().baseUrl(baseUrl).build();
 		this.processPath = processPath;
 		this.statusPathTemplate = statusPathTemplate;
+		this.buildFaissPath = buildFaissPath;
+		this.buildBm25Path = buildBm25Path;
 	}
 
 	// 向RAG微服务发送异步文档处理请求
 	public Mono<RagProcessResponse> processDocs(Long userId, List<RagDocItem> docs) {
 		List<String> docIds = docs == null ? List.of() : docs.stream().map(RagDocItem::docId).toList();
-		RagProcessRequest request = new RagProcessRequest(userId, docIds, docs == null ? List.of() : docs, "auto", false, true, true);
+		RagProcessRequest request = new RagProcessRequest(userId, docIds, docs == null ? List.of() : docs, "auto", false, false, false);
 		return webClient.post()
 				.uri(processPath)
 				.bodyValue(request)
 				.retrieve()
 				.bodyToMono(RagProcessResponse.class);
+	}
+
+	public Mono<RagIndexBuildResponse> buildFaiss() {
+		return webClient.post()
+				.uri(buildFaissPath)
+				.bodyValue(new RagIndexBuildRequest(null))
+				.retrieve()
+				.bodyToMono(RagIndexBuildResponse.class);
+	}
+
+	public Mono<RagIndexBuildResponse> buildBm25() {
+		return webClient.post()
+				.uri(buildBm25Path)
+				.bodyValue(new RagIndexBuildRequest(null))
+				.retrieve()
+				.bodyToMono(RagIndexBuildResponse.class);
 	}
 
 	// 获取文档导入状态
@@ -56,6 +78,12 @@ public class DocsRagClient {
 	) {
 	}
 
+	private record RagIndexBuildRequest(
+			@JsonAlias({"chunks_path"})
+			String chunksPath
+	) {
+	}
+
 	public record RagProcessResponse(
 			boolean ok,
 			int files,
@@ -66,6 +94,12 @@ public class DocsRagClient {
 			Map<String, Integer> chunksBySource,
 			@JsonAlias({"processed_doc_ids"})
 			List<String> processedDocIds,
+			String message
+	) {
+	}
+
+	public record RagIndexBuildResponse(
+			boolean ok,
 			String message
 	) {
 	}

@@ -17,12 +17,14 @@ import org.swpu.backend.common.api.ApiResponse;
 import org.swpu.backend.common.api.PageResult;
 import org.swpu.backend.modules.docs.dto.DocQuery;
 import org.swpu.backend.modules.docs.dto.ProcessDocsRequest;
+import org.swpu.backend.modules.docs.dto.ReindexRequest;
 import org.swpu.backend.modules.docs.service.DocsService;
 import org.swpu.backend.modules.docs.vo.DeleteResult;
 import org.swpu.backend.modules.docs.vo.DocItem;
 import org.swpu.backend.modules.docs.vo.DocProcessInfo;
 import org.swpu.backend.modules.docs.vo.IngestResult;
 import org.swpu.backend.modules.docs.vo.ProcessStartResult;
+import org.swpu.backend.modules.docs.vo.ReindexResult;
 
 // 文档管理接口
 @RestController
@@ -120,5 +122,14 @@ public class DocsController {
 			@RequestHeader(name = "Authorization", required = false) String authorization,
 			@Valid @RequestBody ProcessDocsRequest request) {
 		return ApiResponse.success(docsService.startProcessBatch(authorization, request));
+	}
+
+	@PostMapping("/docs/reindex")
+	@Operation(summary = "重建知识库索引", description = "按需重建 FAISS 与 BM25 索引", security = {@SecurityRequirement(name = "bearerAuth")})
+	public ApiResponse<ReindexResult> rebuildIndex(
+			@Parameter(description = "Bearer Token，格式：Bearer {token}")
+			@RequestHeader(name = "Authorization", required = false) String authorization,
+			@RequestBody(required = false) ReindexRequest request) {
+		return ApiResponse.success(docsService.rebuildIndex(authorization, request));
 	}
 }

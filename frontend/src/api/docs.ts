@@ -1,5 +1,5 @@
 import { http } from "./http";
-import type { ApiResponse, DocItem, DocProcessInfo, PageResult, ProcessStartResult } from "@/types";
+import type { ApiResponse, DocItem, DocProcessInfo, PageResult, ProcessStartResult, ReindexResult } from "@/types";
 
 export async function listDocs(params: { page?: number; pageSize?: number; keyword?: string; status?: string }) {
     const { data } = await http.get<ApiResponse<PageResult<DocItem>>>("/api/v1/docs", { params });
@@ -33,6 +33,14 @@ export async function processDoc(docId: string) {
 export async function getDocProcessInfo(docId: string) {
     const { data } = await http.get<ApiResponse<DocProcessInfo>>(
         `/api/v1/docs/${encodeURIComponent(docId)}/process`
+    );
+    return data;
+}
+
+export async function rebuildIndex(body?: { rebuildFaiss?: boolean; rebuildBm25?: boolean }) {
+    const { data } = await http.post<ApiResponse<ReindexResult>>(
+        "/api/v1/docs/reindex",
+        body ?? {}
     );
     return data;
 }

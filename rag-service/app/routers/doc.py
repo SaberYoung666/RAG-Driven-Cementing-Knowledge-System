@@ -315,56 +315,59 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
             if not processed_docs:
                 return
 
-            for doc in processed_docs:
-                indexing_steps = 1
-                if req.rebuild_faiss and doc.records:
-                    indexing_steps += 1
-                if req.rebuild_bm25 and doc.records:
-                    indexing_steps += 1
-                if doc.records and (req.rebuild_faiss or req.rebuild_bm25):
-                    indexing_steps += 1
-                doc.__dict__["indexing_steps"] = indexing_steps
-                doc.__dict__["completed_indexing_steps"] = 0
-                row = job_manager.set_stage(
-                    doc.doc_id,
-                    "indexing",
-                    progress=_resolve_progress("indexing", {"stage_progress": 0}),
-                    stage_progress=0,
-                    pages_processed=doc.pages_processed,
-                    total_pages=doc.pages_processed,
-                    current_page=doc.pages_processed,
-                    ocr_pages=doc.ocr_pages,
-                    chunk_count=len(doc.records),
-                    failed_pages=doc.failed_pages,
-                    elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
-                    trace_id=trace_id_map.get(doc.doc_id),
-                )
-                _publish_status(app, row)
+            should_rebuild_index = bool(req.rebuild_faiss or req.rebuild_bm25)
+            if should_rebuild_index:
+                for doc in processed_docs:
+                    indexing_steps = 1
+                    if req.rebuild_faiss and doc.records:
+                        indexing_steps += 1
+                    if req.rebuild_bm25 and doc.records:
+                        indexing_steps += 1
+                    if doc.records and (req.rebuild_faiss or req.rebuild_bm25):
+                        indexing_steps += 1
+                    doc.__dict__["indexing_steps"] = indexing_steps
+                    doc.__dict__["completed_indexing_steps"] = 0
+                    row = job_manager.set_stage(
+                        doc.doc_id,
+                        "indexing",
+                        progress=_resolve_progress("indexing", {"stage_progress": 0}),
+                        stage_progress=0,
+                        pages_processed=doc.pages_processed,
+                        total_pages=doc.pages_processed,
+                        current_page=doc.pages_processed,
+                        ocr_pages=doc.ocr_pages,
+                        chunk_count=len(doc.records),
+                        failed_pages=doc.failed_pages,
+                        elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
+                        trace_id=trace_id_map.get(doc.doc_id),
+                    )
+                    _publish_status(app, row)
 
             result = ingest_service.persist_documents(
                 docs=processed_docs, incremental=True
             )
-            for doc in processed_docs:
-                doc.__dict__["completed_indexing_steps"] += 1
-                stage_progress = round(
-                    doc.__dict__["completed_indexing_steps"] * 100
-                    / max(doc.__dict__["indexing_steps"], 1)
-                )
-                row = job_manager.set_stage(
-                    doc.doc_id,
-                    "indexing",
-                    progress=_resolve_progress("indexing", {"stage_progress": stage_progress}),
-                    stage_progress=stage_progress,
-                    pages_processed=doc.pages_processed,
-                    total_pages=doc.pages_processed,
-                    current_page=doc.pages_processed,
-                    ocr_pages=doc.ocr_pages,
-                    chunk_count=len(doc.records),
-                    failed_pages=doc.failed_pages,
-                    elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
-                    trace_id=trace_id_map.get(doc.doc_id),
-                )
-                _publish_status(app, row)
+            if should_rebuild_index:
+                for doc in processed_docs:
+                    doc.__dict__["completed_indexing_steps"] += 1
+                    stage_progress = round(
+                        doc.__dict__["completed_indexing_steps"] * 100
+                        / max(doc.__dict__["indexing_steps"], 1)
+                    )
+                    row = job_manager.set_stage(
+                        doc.doc_id,
+                        "indexing",
+                        progress=_resolve_progress("indexing", {"stage_progress": stage_progress}),
+                        stage_progress=stage_progress,
+                        pages_processed=doc.pages_processed,
+                        total_pages=doc.pages_processed,
+                        current_page=doc.pages_processed,
+                        ocr_pages=doc.ocr_pages,
+                        chunk_count=len(doc.records),
+                        failed_pages=doc.failed_pages,
+                        elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
+                        trace_id=trace_id_map.get(doc.doc_id),
+                    )
+                    _publish_status(app, row)
             if req.rebuild_faiss and result.get("total_chunks", 0) > 0:
                 index_service.build_faiss(chunks_path=result["chunks_path"])
                 for doc in processed_docs:
@@ -441,6 +444,9 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
             for doc in processed_docs:
                 stat = doc_stats.get(doc.doc_id, {})
                 elapsed_ms = _elapsed_ms(started_at_map.get(doc.doc_id))
+                done_message = str(stat.get("message", "done"))
+                if not should_rebuild_index:
+                    done_message = "文档已完成切分，待重建索引后可检索"
                 row = job_manager.done(
                     doc.doc_id,
                     pages_processed=int(
@@ -452,7 +458,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                     elapsed_ms=elapsed_ms
                     if elapsed_ms is not None
                     else int(stat.get("elapsed_ms", doc.elapsed_ms)),
-                    message=str(stat.get("message", "done")),
+                    message=done_message,
                     progress=100,
                     stage_progress=100,
                     total_pages=doc.pages_processed,

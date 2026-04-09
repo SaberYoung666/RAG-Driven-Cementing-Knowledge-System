@@ -14,6 +14,17 @@
         </a-upload>
         <a-switch v-model:checked="overwrite" />
         <span style="color:var(--muted);">覆盖已存在文档</span>
+        <span @click.stop>
+          <a-popconfirm
+            title="确认重建全部索引？"
+            description="这会按当前分块数据全量重建 FAISS 和 BM25，期间 CPU 占用会提升。"
+            ok-text="重建"
+            cancel-text="取消"
+            @confirm="triggerRebuildIndex"
+          >
+            <a-button :loading="rebuildLoading" :disabled="isRebuildDisabled">重建索引</a-button>
+          </a-popconfirm>
+        </span>
 
         <a-input v-model:value="keyword" placeholder="关键词" style="width:240px;" allowClear />
         <a-button @click="load">查询</a-button>
@@ -94,7 +105,7 @@ import { useRouter } from "vue-router";
 import { message } from "ant-design-vue";
 import { ReloadOutlined } from "@ant-design/icons-vue";
 import type { TablePaginationConfig } from "ant-design-vue";
-import { ingestFile, listDocs, deleteDoc, processDoc, getDocProcessInfo } from "@/api/docs";
+import { ingestFile, listDocs, deleteDoc, processDoc, getDocProcessInfo, rebuildIndex } from "@/api/docs";
 import { useAppStore } from "@/stores/app";
 import type { DocItem, DocProcessInfo } from "@/types";
 
@@ -114,6 +125,7 @@ const processModalOpen = ref(false);
 const processModalLoading = ref(false);
 const processDocId = ref("");
 const processInfo = ref<DocProcessInfo | null>(null);
+const rebuildLoading = ref(false);
 let autoRefreshTimer: number | null = null;
 let isLoadingDocs = false;
 
@@ -156,6 +168,7 @@ const progressStatus = computed(() => {
   return "active";
 });
 const docsProcessBlockedReason = computed(() => appStore.ragStatus.message || "RAG 服务未连接，请稍后再试");
+const isRebuildDisabled = computed(() => rebuildLoading.value || !appStore.ragStatus.connected || !appStore.ragStatus.serviceAvailable);
 
 function normalizeStatus(status?: string) {
   const s = (status || "").toUpperCase();
@@ -175,7 +188,7 @@ function processStatusText(status?: string) {
   if (s === "UNPROCESSED") return "未处理";
   if (s === "PROCESSING") return "处理中";
   if (s === "FAILED") return "处理失败";
-  if (s === "READY") return "已处理";
+  if (s === "READY") return "已处理（待重建索引）";
   return status || "-";
 }
 
@@ -260,6 +273,26 @@ async function triggerProcess(docId: string) {
   }
   message.success(`已提交 ${res.data.acceptedCount} 个处理任务`);
   await load();
+}
+
+async function triggerRebuildIndex() {
+  if (isRebuildDisabled.value) {
+    message.warning(docsProcessBlockedReason.value);
+    return;
+  }
+  rebuildLoading.value = true;
+  try {
+    const res = await rebuildIndex({ rebuildFaiss: true, rebuildBm25: true });
+    if (res.code !== 0 || !res.data) {
+      message.error(res.message || "重建索引失败");
+      return;
+    }
+    message.success(res.data.message || "索引重建已完成");
+  } catch {
+    message.error("重建索引失败");
+  } finally {
+    rebuildLoading.value = false;
+  }
 }
 
 async function onProcessAction(record: DocItem) {

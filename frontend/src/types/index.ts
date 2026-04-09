@@ -95,6 +95,14 @@ export interface ProcessStartResult {
     acceptedCount: number;
 }
 
+export interface ReindexResult {
+    rebuildFaiss: boolean;
+    rebuildBm25: boolean;
+    faissMessage?: string;
+    bm25Message?: string;
+    message: string;
+}
+
 export interface PageResult<T> {
     total: number;
     items: T[];
