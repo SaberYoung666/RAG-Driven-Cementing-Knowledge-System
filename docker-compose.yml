@@ -27,6 +27,10 @@ services:
     environment:
       BACKEND_CALLBACK_BASE_URL: http://backend:8080
       BACKEND_CALLBACK_SECRET: ${RAG_STATUS_CALLBACK_SECRET:-change-me-rag-callback}
+      HF_ENDPOINT: https://hf-mirror.com
+      HF_HUB_ETAG_TIMEOUT: ${HF_HUB_ETAG_TIMEOUT:-30}
+      HF_HUB_DOWNLOAD_TIMEOUT: ${HF_HUB_DOWNLOAD_TIMEOUT:-300}
+      NO_PROXY: localhost,127.0.0.1,backend,postgres,rag-service
     ports:
       - "${RAG_PORT:-8000}:8000"
     volumes:

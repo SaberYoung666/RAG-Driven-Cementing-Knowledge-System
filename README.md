@@ -155,6 +155,9 @@ docker compose up -d --build
 docker compose logs -f
 docker compose down
 docker compose down -v
+// 若修改了代码
+git pull
+docker compose up -d --build
 ```
 
 说明：
