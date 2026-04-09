@@ -134,6 +134,7 @@ export interface ChatSessionMessage {
     content: string;
     createdAt?: string;
     citations?: Citation[];
+    retrieved?: RetrievedChunk[];
 }
 
 export interface ChatSessionDetail {

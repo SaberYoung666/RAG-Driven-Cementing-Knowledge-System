@@ -135,11 +135,13 @@ public class ChatLogService {
 			Map<Long, List<CitationRow>> citationMap = loadCitationMap(connection, messages);
 			List<SessionMessage> result = new ArrayList<>(messages.size());
 			for (MessageRow message : messages) {
+				List<CitationRow> citationRows = citationMap.get(message.id());
 				result.add(new SessionMessage(
 						message.role(),
 						message.content(),
 						message.createdAt(),
-						toCitationMapsFromRows(citationMap.get(message.id()))
+						toCitationMapsFromRows(citationRows),
+						toRetrievedListFromRows(citationRows)
 				));
 			}
 			return List.copyOf(result);
@@ -189,7 +191,12 @@ public class ChatLogService {
 						toMillis(resp == null || resp.debug() == null ? null : resp.debug().genMs()),
 						now
 				);
-				persistCitations(connection, assistantMessageId, resp == null ? List.of() : resp.citations());
+				persistCitations(
+						connection,
+						assistantMessageId,
+						resp == null ? List.of() : resp.citations(),
+						resp == null ? List.of() : resp.retrieved()
+				);
 				updateSessionTimestamp(connection, sessionId, userId, now);
 				connection.commit();
 			} catch (SQLException ex) {
@@ -223,18 +230,26 @@ public class ChatLogService {
 		}
 	}
 
-	private void persistCitations(Connection connection, Long messageId, List<ChatDto.Citation> citations) throws SQLException {
+	private void persistCitations(
+			Connection connection,
+			Long messageId,
+			List<ChatDto.Citation> citations,
+			List<ChatDto.Retrieved> retrieved
+	) throws SQLException {
 		if (messageId == null || citations == null || citations.isEmpty()) {
 			return;
 		}
-		String sql = "INSERT INTO chat_citation (message_id, chunk_id, source, page, section, score) VALUES (?, ?, ?, ?, ?, ?)";
+		Map<String, ChatDto.Retrieved> retrievedByChunkId = indexRetrievedByChunkId(retrieved);
+		String sql = "INSERT INTO chat_citation (message_id, chunk_id, source, page, section, score, snippet) VALUES (?, ?, ?, ?, ?, ?, ?)";
 		try (PreparedStatement ps = connection.prepareStatement(sql, Statement.NO_GENERATED_KEYS)) {
 			for (ChatDto.Citation citation : citations) {
 				if (citation == null || !StringUtils.hasText(citation.chunkId()) || !StringUtils.hasText(citation.source())) {
 					continue;
 				}
+				String chunkId = citation.chunkId().trim();
+				ChatDto.Retrieved matchedRetrieved = retrievedByChunkId.get(chunkId);
 				ps.setLong(1, messageId);
-				ps.setString(2, citation.chunkId().trim());
+				ps.setString(2, chunkId);
 				ps.setString(3, citation.source().trim());
 				if (citation.page() == null) {
 					ps.setNull(4, java.sql.Types.INTEGER);
@@ -247,6 +262,7 @@ public class ChatLogService {
 				} else {
 					ps.setDouble(6, citation.score());
 				}
+				ps.setString(7, matchedRetrieved == null ? null : matchedRetrieved.text());
 				ps.addBatch();
 			}
 			ps.executeBatch();
@@ -287,7 +303,7 @@ public class ChatLogService {
 		if (messageIds.isEmpty()) {
 			return Map.of();
 		}
-		StringBuilder sql = new StringBuilder("SELECT message_id, chunk_id, source, page, section, score FROM chat_citation WHERE message_id IN (");
+		StringBuilder sql = new StringBuilder("SELECT message_id, chunk_id, source, page, section, score, snippet FROM chat_citation WHERE message_id IN (");
 		for (int i = 0; i < messageIds.size(); i++) {
 			if (i > 0) {
 				sql.append(", ");
@@ -309,7 +325,8 @@ public class ChatLogService {
 							rs.getString("source"),
 							(Integer) rs.getObject("page"),
 							rs.getString("section"),
-							(Double) rs.getObject("score")
+							(Double) rs.getObject("score"),
+							rs.getString("snippet")
 					));
 				}
 				return result;
@@ -335,6 +352,50 @@ public class ChatLogService {
 			));
 		}
 		return List.copyOf(result);
+	}
+
+	private List<ChatDto.Retrieved> toRetrievedListFromRows(List<CitationRow> citations) {
+		if (citations == null || citations.isEmpty()) {
+			return List.of();
+		}
+		List<ChatDto.Retrieved> result = new ArrayList<>(citations.size());
+		for (CitationRow citation : citations) {
+			if (citation == null || !StringUtils.hasText(citation.chunkId())) {
+				continue;
+			}
+			result.add(new ChatDto.Retrieved(
+					citation.chunkId(),
+					citation.score(),
+					citation.snippet(),
+					toRetrievedMetadata(citation)
+			));
+		}
+		return List.copyOf(result);
+	}
+
+	private Map<String, Object> toRetrievedMetadata(CitationRow citation) {
+		Map<String, Object> metadata = new LinkedHashMap<>();
+		if (citation == null) {
+			return metadata;
+		}
+		metadata.put("source", citation.source());
+		metadata.put("page", citation.page());
+		metadata.put("section", citation.section());
+		return metadata;
+	}
+
+	private Map<String, ChatDto.Retrieved> indexRetrievedByChunkId(List<ChatDto.Retrieved> retrieved) {
+		if (retrieved == null || retrieved.isEmpty()) {
+			return Map.of();
+		}
+		Map<String, ChatDto.Retrieved> result = new LinkedHashMap<>();
+		for (ChatDto.Retrieved item : retrieved) {
+			if (item == null || !StringUtils.hasText(item.chunkId())) {
+				continue;
+			}
+			result.put(item.chunkId().trim(), item);
+		}
+		return result;
 	}
 
 	private int toMillis(Double value) {
@@ -367,7 +428,8 @@ public class ChatLogService {
 			String role,
 			String content,
 			String createdAt,
-			List<Map<String, Object>> citations
+			List<Map<String, Object>> citations,
+			List<ChatDto.Retrieved> retrieved
 	) {
 	}
 
@@ -397,6 +459,6 @@ public class ChatLogService {
 	private record MessageRow(Long id, String role, String content, String createdAt) {
 	}
 
-	private record CitationRow(Long messageId, String chunkId, String source, Integer page, String section, Double score) {
+	private record CitationRow(Long messageId, String chunkId, String source, Integer page, String section, Double score, String snippet) {
 	}
 }
