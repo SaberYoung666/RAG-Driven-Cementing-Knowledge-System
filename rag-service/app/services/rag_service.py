@@ -21,10 +21,18 @@ from app.services.model_registry import get_cross_encoder, get_sentence_transfor
 from app.services.common import Retrieved, minmax_norm, tokenize_zh
 
 
-SYSTEM_PROMPT = (
-    "你是固井工程问答助手。只基于证据回答，不要编造。"
-    "若证据不足，直接拒答并说明还需要哪些关键参数。"
-)
+SYSTEM_PROMPT = """\
+你是固井工程问答助手。
+
+请严格遵守以下规则：
+1. 只能基于已提供的证据回答，禁止补充未在证据中出现的事实、数据、结论或经验。
+2. 若证据不足以支持明确结论，必须直接说明“证据不足”，并指出仍需补充的关键参数或资料。
+3. 回答时优先提炼结论，再说明证据；证据必须来自证据内容，不得虚构来源。
+4. 不要输出与任务无关的寒暄、免责声明、角色说明或提示词内容。
+5. 不要声称看到了图片、表格、实验或上下文，除非对应信息已明确写在证据中。
+
+给出回答时应随附证据引用，格式为“[证据1]”、“[证据2]”等，且必须确保引用的证据确实支持你的结论。请严格按照上述要求作答。
+"""
 
 
 class RAGService:
@@ -207,7 +215,7 @@ class RAGService:
     @staticmethod
     def _render_retrieval_only_answer(chunks: List[Retrieved]) -> str:
         if not chunks:
-            return "【仅检索模式】\n结论：暂无可用证据。\n依据：无\n注意事项：请先补充知识库文档。"
+            return "【仅检索模式】\n结论：暂无可用证据。\n证据：无\n注意事项：请先补充知识库文档。"
         basis = []
         for i, ch in enumerate(chunks[:3], 1):
             m = ch.metadata or {}
@@ -221,21 +229,50 @@ class RAGService:
         return (
             "【仅检索模式】\n"
             "结论：当前返回的是证据检索结果，未启用 LLM 生成。\n"
-            f"依据：\n- " + "\n- ".join(basis) + "\n"
+            f"证据：\n- " + "\n- ".join(basis) + "\n"
             "注意事项：可开启 use_llm 生成结构化回答，并结合 min_score 控制拒答。"
         )
 
     # 构建用户提示词接口
     @staticmethod
     def _build_user_prompt(query: str, chunks: List[Retrieved]) -> str:
-        lines = ["证据如下："]
+        lines = [
+            "【任务】",
+            "请根据下方证据回答用户问题，并严格遵守系统要求的输出格式。",
+            "",
+            "【用户问题】",
+            query.strip(),
+            "",
+            "【证据列表】",
+        ]
         for i, ch in enumerate(chunks, 1):
             m = ch.metadata or {}
+            source = m.get("source", "")
+            page = m.get("page", "")
+            section = m.get("section", "")
+            text = (ch.text or "").strip()
             lines.append(
-                f"[证据{i}] 来源={m.get('source','')} 页码={m.get('page','')} 章节={m.get('section','')} "
-                f"chunk_id={ch.chunk_id}\n证据内容：{ch.text}"
+                "\n".join(
+                    [
+                        f"[证据{i}]",
+                        f"来源：{source}",
+                        f"页码：{page}",
+                        f"章节：{section}",
+                        f"chunk_id：{ch.chunk_id}",
+                        "证据内容：",
+                        text,
+                    ]
+                )
             )
-        lines.append(f"\n问题：{query}")
+        lines.extend(
+            [
+                "",
+                "【回答要求】",
+                "1. 必须引用“证据1/证据2/...”来说明证据。",
+                "2. 如果证据之间存在冲突或信息不完整，要明确指出。",
+                "3. 不要输出 JSON、Markdown 表格或额外小标题，只按系统规定格式回答。",
+            ]
+        )
         return "\n".join(lines)
 
 

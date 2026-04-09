@@ -584,13 +584,20 @@ function quickAsk(q: string) {
   });
 }
 
+function normalizeChunkId(value: any) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return "";
+  const matched = raw.match(/p\d+::c\d+/);
+  return matched?.[0] ?? raw;
+}
+
 // 格式化引用数据
 function normalizeCitation(c: any): Citation {
   return {
     evidence_id: c?.evidence_id ?? c?.evidenceId ?? "证据",
     score: Number(c?.score ?? 0),
     doc_id: c?.doc_id ?? c?.docId,
-    chunk_id: c?.chunk_id ?? c?.chunkId ?? "",
+    chunk_id: normalizeChunkId(c?.chunk_id ?? c?.chunkId),
     source: c?.source,
     page: c?.page,
     section: c?.section,
@@ -615,7 +622,7 @@ function normalizeRetrieved(item: any): RetrievedEvidence {
   const metadata = item?.metadata ?? {};
   return {
     rank: item?.rank,
-    chunkId: item?.chunkId ?? item?.chunk_id ?? "",
+    chunkId: normalizeChunkId(item?.chunkId ?? item?.chunk_id),
     score: Number(item?.score ?? 0),
     text: item?.text,
     source: item?.source ?? metadata?.source,
@@ -651,7 +658,8 @@ function applyDetailMessages(rawMessages: any[]) {
 }
 
 function findRetrievedEvidence(message: Message, citation: Citation) {
-  return (message.retrieved ?? []).find((item) => item.chunkId === citation.chunk_id);
+  const normalizedCitationChunkId = normalizeChunkId(citation.chunk_id);
+  return (message.retrieved ?? []).find((item) => normalizeChunkId(item.chunkId) === normalizedCitationChunkId);
 }
 
 function openEvidenceDetail(message: Message, citation: Citation) {
