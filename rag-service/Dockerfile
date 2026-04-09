@@ -2,7 +2,10 @@ FROM python:3.10-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DEFAULT_TIMEOUT=600 \
+    PIP_TIMEOUT=600 \
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
 WORKDIR /app
 
@@ -23,13 +26,12 @@ RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debia
 
 COPY requirements.txt ./
 
-ENV PIP_DEFAULT_TIMEOUT=600
-ENV PIP_TIMEOUT=600
-
-RUN python -m pip install --upgrade pip && \
+RUN python -m pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple && \
     pip install --timeout 600 --retries 20 \
     --index-url https://download.pytorch.org/whl/cpu torch && \
-    pip install --timeout 600 --retries 20 -r requirements.txt
+    pip install --timeout 600 --retries 20 \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -r requirements.txt
 
 COPY . .
 
