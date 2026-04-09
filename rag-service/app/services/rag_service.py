@@ -43,6 +43,7 @@ class RAGService:
     def reload_assets(self, silent: bool = False) -> None:
         try:
             self.faiss_retriever = _DenseRetriever(
+                settings=self.settings,
                 index_dir=self.index_dir,
                 embedding_model=self.settings.embedding_model,
                 normalize_embeddings=self.settings.normalize_embeddings,
@@ -62,12 +63,11 @@ class RAGService:
                 )
 
         # 重排配置
-        rerank_cfg = self.settings.config.get("rerank", {})
         # 若启用了重排，则执行
-        if rerank_cfg.get("enabled", False):
+        if self.settings.rerank_enabled:
             try:
                 self.reranker = _CrossReranker(
-                    rerank_cfg.get("model", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+                    settings=self.settings, model_name=self.settings.rerank_model
                 )
             except Exception:
                 self.reranker = None
@@ -242,11 +242,16 @@ class RAGService:
 # 基于 FAISS 的稠密检索器
 class _DenseRetriever:
     def __init__(
-        self, index_dir: Path, embedding_model: str, normalize_embeddings: bool
+        self,
+        settings: Settings,
+        index_dir: Path,
+        embedding_model: str,
+        normalize_embeddings: bool,
     ):
         import faiss
         import numpy as np
 
+        self.settings = settings
         self.np = np
         self.index_dir = index_dir
         # 读取 FAISS 索引
@@ -258,7 +263,11 @@ class _DenseRetriever:
         # 加载文档存储，构建 chunk_id 到文本和元数据的映射
         self.docstore = self._load_docstore(index_dir / "docstore.jsonl")
         # 创建一个具体embedding模型对象
-        self.model = get_sentence_transformer(embedding_model)
+        self.model = get_sentence_transformer(
+            embedding_model,
+            cache_dir=self.settings.model_cache_dir,
+            local_files_only=self.settings.hf_local_files_only,
+        )
         # 是否对向量进行归一化处理
         self.normalize = normalize_embeddings
 
@@ -379,8 +388,12 @@ class _HybridRetriever:
 
 # 重排器
 class _CrossReranker:
-    def __init__(self, model_name: str):
-        self.model = get_cross_encoder(model_name)
+    def __init__(self, settings: Settings, model_name: str):
+        self.model = get_cross_encoder(
+            model_name,
+            cache_dir=settings.model_cache_dir,
+            local_files_only=settings.hf_local_files_only,
+        )
 
     # 重排接口
     def rerank(

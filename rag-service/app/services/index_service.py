@@ -29,7 +29,11 @@ class IndexService:
         chunk_ids, texts, metas = self._read_chunks(cp)
         self.index_dir.mkdir(parents=True, exist_ok=True)
 
-        model = get_sentence_transformer(self.settings.embedding_model)
+        model = get_sentence_transformer(
+            self.settings.embedding_model,
+            cache_dir=self.settings.model_cache_dir,
+            local_files_only=self.settings.hf_local_files_only,
+        )
         embeds = model.encode(
             texts,
             convert_to_numpy=True,

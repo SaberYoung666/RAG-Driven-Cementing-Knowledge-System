@@ -13,13 +13,47 @@ from app.services.backend_callback_client import BackendCallbackClient
 from app.services.ingest_job_manager import IngestJobManager
 from app.services.index_service import IndexService
 from app.services.ingest_service import IngestService
+from app.services.model_registry import get_cross_encoder, get_sentence_transformer
 from app.services.rag_service import RAGService
 
 # 创建日志记录器，记录器名称为当前模块名，日志级别和格式由全局配置决定。
 logger = logging.getLogger(__name__)
 
+
+def _prewarm_models() -> None:
+    if settings.model_cache_dir is not None:
+        settings.model_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    get_sentence_transformer(
+        settings.embedding_model,
+        cache_dir=settings.model_cache_dir,
+        local_files_only=settings.hf_local_files_only,
+    )
+
+    if settings.rerank_enabled:
+        get_cross_encoder(
+            settings.rerank_model,
+            cache_dir=settings.model_cache_dir,
+            local_files_only=settings.hf_local_files_only,
+        )
+
 # 资源初始化。在应用启动时创建并初始化各种服务实例，并将它们存储在 app.state.services 中，供后续请求处理使用。
 def init_state(app: FastAPI) -> Dict[str, Any]:
+    if settings.prewarm_models:
+        try:
+            _prewarm_models()
+            logger.info(
+                "模型预热完成: embedding=%s rerank=%s offline=%s cache_dir=%s",
+                settings.embedding_model,
+                settings.rerank_model if settings.rerank_enabled else "<disabled>",
+                settings.hf_local_files_only,
+                settings.model_cache_dir or "<default>",
+            )
+        except Exception:
+            logger.exception("模型预热失败")
+            if settings.prewarm_fail_fast:
+                raise
+
     index_service = IndexService(settings)
     ingest_service = IngestService(settings)
     job_store_path = Path(settings.config.get("ingestion", {}).get("job_store_path", "data/ingest_jobs.json"))

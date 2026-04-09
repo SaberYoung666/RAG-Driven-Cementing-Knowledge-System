@@ -24,6 +24,23 @@ def _deep_get(data: Dict[str, Any], path: str, default: Any) -> Any:
     return cur
 
 
+def _to_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_path(value: str | None) -> Path | None:
+    if not value:
+        return None
+    path = Path(value)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path.resolve()
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str
@@ -56,6 +73,49 @@ class Settings:
     @property
     def normalize_embeddings(self) -> bool:
         return bool(_deep_get(self.config, "indexing.normalize_embeddings", True))
+
+    @property
+    def rerank_enabled(self) -> bool:
+        return bool(_deep_get(self.config, "rerank.enabled", True))
+
+    @property
+    def rerank_model(self) -> str:
+        return str(
+            _deep_get(
+                self.config,
+                "rerank.model",
+                "cross-encoder/ms-marco-MiniLM-L-6-v2",
+            )
+        )
+
+    @property
+    def model_cache_dir(self) -> Path | None:
+        value = os.getenv("RAG_MODEL_CACHE_DIR")
+        if value:
+            return _resolve_path(value.strip())
+        cfg_value = str(_deep_get(self.config, "models.cache_dir", "")).strip()
+        return _resolve_path(cfg_value)
+
+    @property
+    def hf_local_files_only(self) -> bool:
+        value = os.getenv("RAG_HF_LOCAL_FILES_ONLY")
+        if value is not None:
+            return _to_bool(value, False)
+        return _to_bool(_deep_get(self.config, "models.local_files_only", False), False)
+
+    @property
+    def prewarm_models(self) -> bool:
+        value = os.getenv("RAG_PREWARM_MODELS")
+        if value is not None:
+            return _to_bool(value, True)
+        return _to_bool(_deep_get(self.config, "models.prewarm_on_startup", True), True)
+
+    @property
+    def prewarm_fail_fast(self) -> bool:
+        value = os.getenv("RAG_PREWARM_FAIL_FAST")
+        if value is not None:
+            return _to_bool(value, False)
+        return _to_bool(_deep_get(self.config, "models.prewarm_fail_fast", False), False)
 
     @property
     def expose_error_details(self) -> bool:
