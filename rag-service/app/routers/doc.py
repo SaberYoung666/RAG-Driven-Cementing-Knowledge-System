@@ -236,7 +236,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         total_pages=doc_chunks.pages_processed,
                         current_page=doc_chunks.pages_processed,
                         ocr_pages=doc_chunks.ocr_pages,
-                        chunk_count=len(doc_chunks.records),
+                        chunk_count=doc_chunks.chunk_count,
                         failed_pages=doc_chunks.failed_pages,
                         elapsed_ms=_elapsed_ms(t0),
                         trace_id=trace_id,
@@ -319,11 +319,11 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
             if should_rebuild_index:
                 for doc in processed_docs:
                     indexing_steps = 1
-                    if req.rebuild_faiss and doc.records:
+                    if req.rebuild_faiss and doc.chunk_count > 0:
                         indexing_steps += 1
-                    if req.rebuild_bm25 and doc.records:
+                    if req.rebuild_bm25 and doc.chunk_count > 0:
                         indexing_steps += 1
-                    if doc.records and (req.rebuild_faiss or req.rebuild_bm25):
+                    if doc.chunk_count > 0 and (req.rebuild_faiss or req.rebuild_bm25):
                         indexing_steps += 1
                     doc.__dict__["indexing_steps"] = indexing_steps
                     doc.__dict__["completed_indexing_steps"] = 0
@@ -336,7 +336,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         total_pages=doc.pages_processed,
                         current_page=doc.pages_processed,
                         ocr_pages=doc.ocr_pages,
-                        chunk_count=len(doc.records),
+                        chunk_count=doc.chunk_count,
                         failed_pages=doc.failed_pages,
                         elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
                         trace_id=trace_id_map.get(doc.doc_id),
@@ -362,7 +362,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         total_pages=doc.pages_processed,
                         current_page=doc.pages_processed,
                         ocr_pages=doc.ocr_pages,
-                        chunk_count=len(doc.records),
+                        chunk_count=doc.chunk_count,
                         failed_pages=doc.failed_pages,
                         elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
                         trace_id=trace_id_map.get(doc.doc_id),
@@ -385,7 +385,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         total_pages=doc.pages_processed,
                         current_page=doc.pages_processed,
                         ocr_pages=doc.ocr_pages,
-                        chunk_count=len(doc.records),
+                        chunk_count=doc.chunk_count,
                         failed_pages=doc.failed_pages,
                         elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
                         trace_id=trace_id_map.get(doc.doc_id),
@@ -408,7 +408,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         total_pages=doc.pages_processed,
                         current_page=doc.pages_processed,
                         ocr_pages=doc.ocr_pages,
-                        chunk_count=len(doc.records),
+                        chunk_count=doc.chunk_count,
                         failed_pages=doc.failed_pages,
                         elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
                         trace_id=trace_id_map.get(doc.doc_id),
@@ -433,7 +433,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         total_pages=doc.pages_processed,
                         current_page=doc.pages_processed,
                         ocr_pages=doc.ocr_pages,
-                        chunk_count=len(doc.records),
+                        chunk_count=doc.chunk_count,
                         failed_pages=doc.failed_pages,
                         elapsed_ms=_elapsed_ms(started_at_map.get(doc.doc_id)),
                         trace_id=trace_id_map.get(doc.doc_id),
@@ -453,7 +453,7 @@ def _run_docs_job(app: Any, req: DocsProcessRequest) -> None:
                         stat.get("pages_processed", doc.pages_processed)
                     ),
                     ocr_pages=int(stat.get("ocr_pages", doc.ocr_pages)),
-                    chunk_count=int(stat.get("chunk_count", len(doc.records))),
+                    chunk_count=int(stat.get("chunk_count", doc.chunk_count)),
                     failed_pages=list(stat.get("failed_pages", doc.failed_pages)),
                     elapsed_ms=elapsed_ms
                     if elapsed_ms is not None
